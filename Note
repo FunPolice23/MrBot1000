@@ -1,0 +1,4 @@
+I am a non-coder aka vibe-coder so this program is far from being great or just basic maybe but was fun to make.
+My system specifications are very limited compared to most others using local ai(my 6gb vram) which puts me in a tough spot,
+splitting cpu and gpu between two models allows the chat model to use a 2b params model while the gpu uses 2-4b param model and communicate to each other.
+There is still much work to do and things to implement better so for now this is just a WIP that will be refined in time.
