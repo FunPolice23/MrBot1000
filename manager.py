@@ -82,11 +82,11 @@ _FOCUS_AREAS = [
 
 _INTENT_KEYWORDS = {
     "task":     ["improve", "fix", "refactor", "add", "implement", "update",
-                 "create", "optimize", "scan", "review", "build", "write"],
+                 "create", "optimize", "scan", "review", "build", "write",
+                 "analyze", "audit", "examine", "examine code", "security check"],
     "question": ["what", "how", "why", "which", "when", "status", "explain",
                  "tell me", "describe", "show", "list", "report", 
-                 "contact", "reach", "communicate", "talk", "chat",
-                 "can you", "could you", "able to", "must i"],
+                 "contact", "reach", "communicate", "talk", "chat"],
     "command":  ["pause", "stop", "start", "reset", "clear", "run", "execute",
                  "assign", "search", "scan jobs"],
 }
@@ -110,16 +110,14 @@ def _classify_intent(text: str) -> str:
     scores = {intent: sum(1 for kw in kws if kw in lower)
               for intent, kws in _INTENT_KEYWORDS.items()}
     
-    # Question precedence: only classify as question if:
-    # 1. Question keywords exist, AND
-    # 2. Question score > 0, AND  
-    # 3. Either no task keywords, OR question_score > task_score
+    # Question precedence: classify as question only when task intent is absent.
+    # This avoids polite task phrasing like "can you fix..." being misrouted.
     question_score = scores.get("question", 0)
     task_score = scores.get("task", 0)
     
     # Only override to question if there are clear conversational indicators
     # (multi-word phrases like "can you", "tell me", or exclusive question keywords)
-    if question_score > 0:
+    if question_score > 0 and task_score == 0:
         # Check for multi-word conversational cues (stronger signal)
         has_conv_cue = any(cue in lower for cue in ["can you", "could you", "tell me", 
                            "must i", "able to", "contact me", "reach me"])
@@ -231,6 +229,7 @@ class ManagerThread(QThread):
         self._last_actions: List[str] = []
         self._last_llm_time  = 0.0
         self._min_llm_gap    = 2.0
+        self._last_heartbeat_emit = 0.0
 
         self._last_research      = None
         self._last_research_time = 0.0
@@ -491,23 +490,8 @@ class ManagerThread(QThread):
 
     def _llm_call(self, system: str, user: str, trigger: str) -> str:
         self._rate_limit()
-        t0 = time.time()
-        result = self.worker.llm(system=system, user=user)
+        result = self.worker.llm(system=system, user=user, trigger=trigger)
         self._last_llm_time = time.time()
-        latency = int((time.time() - t0) * 1000)
-        if self.db:
-            try:
-                self.db.log_llm_call(
-                    model=getattr(self.worker, "last_model", "unknown"),
-                    provider=getattr(self.worker, "last_provider", "unknown"),
-                    trigger=trigger,
-                    prompt_chars=len(system) + len(user),
-                    response_chars=len(result),
-                    latency_ms=latency,
-                    error=result if result.startswith("ERROR:") else None
-                )
-            except Exception:
-                pass
         return result
 
     def _history_suffix(self) -> str:
@@ -563,12 +547,23 @@ class ManagerThread(QThread):
             f"Manager directive: {action}\n\n"
             f"Available file context:\n{context[:8000]}"
         )
-        result = w.llm(system=self.WORKER_SYSTEM, user=agent_prompt, chat=True)
-
-        self._a_think(f"[{worker_name}] Result:\n{result}")
-        result_short = (result.split("RESULT:")[-1].strip()
-                         if "RESULT:" in result else result)
-        return result_short
+        try:
+            result = w.llm(
+                system=self.WORKER_SYSTEM,
+                user=agent_prompt,
+                chat=False,
+                trigger=f"worker_exec:{worker_name}"
+            )
+            self._a_think(f"[{worker_name}] Result:\n{result}")
+            result_short = (result.split("RESULT:")[-1].strip()
+                             if "RESULT:" in result else result)
+            return result_short
+        except Exception as e:
+            err = f"{worker_name} execution failed: {e}"
+            self._a_think(err)
+            return f"ERROR: {err}"
+        finally:
+            self._set_worker_free(worker_name)
 
     def stop(self):
         """Signal the manager to stop running."""
@@ -654,6 +649,14 @@ class ManagerThread(QThread):
 
         result = self._execute_with_worker(worker_name, task, full_context)
         self._last_actions.append(f"{worker_name}: {task[:40]}")
+        if len(self._last_actions) > 30:
+            self._last_actions.pop(0)
+
+        # Send the concrete worker result back to the chat surface.
+        self.chat_reply.emit(
+            "Task Result",
+            f"{worker_name} handled: {task}\n\nResult:\n{result}"
+        )
 
         # Update shared state
         self.update_shared_state(f"action_{int(time.time())}", task[:60])
@@ -675,7 +678,11 @@ class ManagerThread(QThread):
         self._m_think(f"Processing job: {job.get('title', '')[:40]}")
 
     def _heartbeat(self):
+        now = time.time()
+        if (now - self._last_heartbeat_emit) < self.HEARTBEAT_INTERVAL:
+            return
+
         self._focus_index = (self._focus_index + 1) % len(_FOCUS_AREAS)
-        if int(time.time()) % self.HEARTBEAT_INTERVAL == 0:
-            focus = _FOCUS_AREAS[self._focus_index]
-            self.agent_status.emit("Heartbeat", focus)
+        focus = _FOCUS_AREAS[self._focus_index]
+        self.agent_status.emit("Heartbeat", focus)
+        self._last_heartbeat_emit = now

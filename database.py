@@ -178,11 +178,11 @@ class AgentDB:
     def get_llm_stats(self) -> dict:
         row = self._execute("""
             SELECT
-                COUNT(*)                            AS total_calls,
-                SUM(CASE WHEN error IS NULL THEN 1 ELSE 0 END) AS successes,
-                SUM(CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END) AS errors,
-                AVG(latency_ms)                     AS avg_latency_ms,
-                SUM(prompt_chars + response_chars)  AS total_chars
+                COALESCE(COUNT(*), 0) AS total_calls,
+                COALESCE(SUM(CASE WHEN error IS NULL THEN 1 ELSE 0 END), 0) AS successes,
+                COALESCE(SUM(CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END), 0) AS errors,
+                COALESCE(AVG(latency_ms), 0) AS avg_latency_ms,
+                COALESCE(SUM(prompt_chars + response_chars), 0) AS total_chars
             FROM llm_calls
         """).fetchone()
         return dict(row) if row else {}

@@ -178,6 +178,40 @@ class WorkerAgent:
             return None
         return chat_model
 
+    def _main_model_effective(self) -> str | None:
+        """Resolve the main/coding model with validation and fallback."""
+        candidates = [
+            os.getenv("OLLAMA_MAIN_MODEL", "").strip(),
+            self._ollama_model_override or "",
+            os.getenv("OLLAMA_MODEL", "").strip(),
+        ]
+        candidates = [c for c in candidates if c]
+        if not candidates:
+            return None
+
+        if not OLLAMA_AVAILABLE:
+            return candidates[0]
+
+        try:
+            available = self._ollama_model_names()
+        except Exception:
+            available = []
+
+        if available:
+            for cand in candidates:
+                if cand in available:
+                    self.log_signal.emit(f"[LLM] using main model: {cand}")
+                    return cand
+            self.log_signal.emit(
+                f"[LLM] main model not found: {candidates[0]}; available={available[:5]}"
+            )
+            return None
+
+        # If tags query failed, still try the highest-priority candidate.
+        self.log_signal.emit(f"[LLM] using main model: {candidates[0]}")
+        return candidates[0]
+
+
     def _ollama_model_names(self) -> list[str]:
         if not _REQUESTS_AVAILABLE or not _requests:
             return []
@@ -194,7 +228,21 @@ class WorkerAgent:
     def llm(self, system: str, user: str, *, chat: bool = False, **kwargs) -> str:
         """Call LLM with retries, multiple providers, and max_tokens."""
         max_tokens = kwargs.get("max_tokens", MAX_TOKENS)
+        trigger = kwargs.get("trigger", "unspecified")
         providers = []
+
+        # Prefer Ollama first so local chat/main models remain active in parallel.
+        if os.getenv("DISABLE_OLLAMA", "false").lower() != "true" and OLLAMA_AVAILABLE:
+            env_model = os.getenv("OLLAMA_MODEL", "llama3.2")
+            chat_model = self._chat_model_effective() if chat else None
+            if chat_model:
+                model = chat_model
+            elif not chat:
+                model = self._main_model_effective()
+            else:
+                model = env_model
+            if model:
+                providers.append(("ollama", self._call_ollama, model, model))
 
         # OpenAI: use when available and not disabled
         if os.getenv("DISABLE_OPENAI", "false").lower() != "true" and OPENAI_AVAILABLE and os.getenv("OPENAI_API_KEY"):
@@ -203,18 +251,6 @@ class WorkerAgent:
         # Anthropic: use when available and not disabled
         if os.getenv("DISABLE_ANTHROPIC", "false").lower() != "true" and ANTHROPIC_AVAILABLE and os.getenv("ANTHROPIC_API_KEY"):
             providers.append(("anthropic", self._call_anthropic, "ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022"))
-
-        # Ollama: use when not disabled and available
-        if os.getenv("DISABLE_OLLAMA", "false").lower() != "true" and OLLAMA_AVAILABLE:
-            env_model = os.getenv("OLLAMA_MODEL", "llama3.2")
-            chat_model = self._chat_model_effective() if chat else None
-            if chat_model:
-                model = chat_model
-            elif self._ollama_model_override:
-                model = self._ollama_model_override
-            else:
-                model = env_model
-            providers.append(("ollama", self._call_ollama, model, model))
 
         self.log_signal.emit(f"[LLM] providers={[p[0] for p in providers]}")
 
@@ -225,11 +261,40 @@ class WorkerAgent:
                     self.last_model = model
                     mode_label = "chat" if chat else "main"
                     self.log_signal.emit(f"[LLM] trying {name} mode={mode_label} model={model}")
+                    t0 = time.time()
                     resp = func(model, system, user, max_tokens, chat=chat)
+                    latency = int((time.time() - t0) * 1000)
                     self.last_provider = name
+                    if self.db:
+                        try:
+                            self.db.log_llm_call(
+                                model=str(model),
+                                provider=name,
+                                trigger=trigger,
+                                prompt_chars=len(system) + len(user),
+                                response_chars=len(resp),
+                                latency_ms=latency,
+                                error=None,
+                            )
+                        except Exception:
+                            pass
                     return resp
                 except Exception as e:
+                    latency = int((time.time() - t0) * 1000) if 't0' in locals() else 0
                     self.log_signal.emit(f"[LLM] {name} failed ({e}), trying next...")
+                    if self.db:
+                        try:
+                            self.db.log_llm_call(
+                                model=str(default_model),
+                                provider=name,
+                                trigger=trigger,
+                                prompt_chars=len(system) + len(user),
+                                response_chars=0,
+                                latency_ms=latency,
+                                error=str(e),
+                            )
+                        except Exception:
+                            pass
                     continue
 
             if attempt < 2:

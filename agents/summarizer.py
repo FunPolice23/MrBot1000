@@ -28,6 +28,7 @@ from __future__ import annotations
 import os
 import json
 import queue
+import re
 import sqlite3
 import threading
 import time
@@ -245,7 +246,10 @@ class SummarizerThread(QThread):
             "You have access to recent summaries and conversation history. "
             "Be helpful, accurate, and conversational. Max 250 words unless asked for more. "
             "Always explain technical details clearly. Do not invent capabilities or fake earnings. "
-            "If asked about technical details, answer accurately based on your knowledge."
+            "If asked about technical details, answer accurately based on your knowledge. "
+            "Treat the LATEST TASK RESULTS section as highest-priority evidence. "
+            "If a recent concrete task result exists, lead with it before broader commentary. "
+            "Do not claim a task was completed unless it appears in the provided evidence."
         )
 
     def __init__(self, worker, db=None):
@@ -268,6 +272,10 @@ class SummarizerThread(QThread):
         self.paused  = False
         self.pending_thoughts: List[str] = []
         self.last_thought_time = time.time()
+        self._recent_thoughts: List[Dict] = []
+        self._recent_task_results: List[Dict] = []
+        self._max_recent_thoughts = 120
+        self._max_recent_task_results = 30
 
         # ── NLP helpers ───────────────────────────────────────────────────
         self._speech_bank    = SpeechPatternBank(max_samples=300)
@@ -306,15 +314,19 @@ class SummarizerThread(QThread):
     # ─────────────────────────────────────────────────────────────────────────
 
     def add_manager_thought(self, text: str):
+        self._record_thought("manager", text)
         self.manager_queue.put(("manager", text))
         self._thought_arrived()
 
     def add_agent_thought(self, text: str):
+        self._record_thought("agent", text)
         self.agent_queue.put(("agent", text))
         self._thought_arrived()
 
     def add_comms_thought(self, direction: str, text: str):
-        self.comms_queue.put(("comms", f"[{direction}] {text}"))
+        comms_text = f"[{direction}] {text}"
+        self._record_thought("comms", comms_text)
+        self.comms_queue.put(("comms", comms_text))
         self._thought_arrived()
 
     def send_human_message(self, text: str):
@@ -323,6 +335,52 @@ class SummarizerThread(QThread):
 
     def _thought_arrived(self):
         self.last_thought_time = time.time()
+
+    def _record_thought(self, source: str, text: str):
+        entry = {
+            "ts": time.time(),
+            "source": source,
+            "text": text,
+        }
+        self._recent_thoughts.append(entry)
+        if len(self._recent_thoughts) > self._max_recent_thoughts:
+            self._recent_thoughts = self._recent_thoughts[-self._max_recent_thoughts:]
+
+        task_result = self._extract_task_result(text)
+        if task_result:
+            self._recent_task_results.append({
+                "ts": entry["ts"],
+                "source": source,
+                "result": task_result,
+            })
+            if len(self._recent_task_results) > self._max_recent_task_results:
+                self._recent_task_results = self._recent_task_results[-self._max_recent_task_results:]
+
+    @staticmethod
+    def _extract_task_result(text: str) -> Optional[str]:
+        # Match explicit task output markers emitted by worker/manager flow.
+        patterns = [
+            r"RESULT:\s*(.+)",
+            r"\bResult:\s*(.+)",
+        ]
+        for pattern in patterns:
+            m = re.search(pattern, text, re.IGNORECASE | re.DOTALL)
+            if m:
+                value = m.group(1).strip()
+                return value[:1200]
+        return None
+
+    def _latest_task_results_context(self, limit: int = 3) -> str:
+        if not self._recent_task_results:
+            return "No recent concrete task results captured."
+        latest = self._recent_task_results[-limit:]
+        lines = []
+        for item in latest:
+            ts = self._fmt_ts(item["ts"])
+            source = item["source"]
+            result = item["result"].replace("\n", " ").strip()
+            lines.append(f"[{ts}] ({source}) {result[:500]}")
+        return "\n".join(lines)
 
     # ─────────────────────────────────────────────────────────────────────────
     #  Configuration
@@ -500,6 +558,7 @@ class SummarizerThread(QThread):
         )
         top_topics = self.summ_db.get_top_topics(limit=8)
         topics_str = ", ".join(t["topic"] for t in top_topics) or "none yet"
+        latest_results_context = self._latest_task_results_context(limit=3)
 
         # Style instruction
         style_instruction = self._speech_bank.as_prompt_instruction()
@@ -513,9 +572,13 @@ class SummarizerThread(QThread):
         conversation_str = self._conversation.render(include_timestamps=False)
 
         user_prompt = (
+            f"LATEST TASK RESULTS (HIGH PRIORITY):\n{latest_results_context}\n\n"
             f"RECENT AGENT SUMMARIES:\n{summ_context}\n\n"
             f"CONVERSATION SO FAR:\n{conversation_str}\n\n"
-            f"Human: {human_text}\nSummarizer:"
+            f"Human: {human_text}\n\n"
+            "Instruction: If LATEST TASK RESULTS contains relevant evidence, "
+            "start your answer with 'Latest concrete result:' and summarize that first.\n"
+            "Summarizer:"
         )
 
         try:

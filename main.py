@@ -219,10 +219,13 @@ class MainWindow(QMainWindow):
         self.pipeline.on_rejected  = self._on_pipeline_rejected
 
         ollama_chat  = os.getenv("OLLAMA_CHAT_MODEL", "").strip() or None
+        ollama_main  = os.getenv("OLLAMA_MAIN_MODEL", "").strip() or None
         self.log_signal.emit(f"[Startup] OLLAMA_CHAT_MODEL from env: {ollama_chat}")
+        self.log_signal.emit(f"[Startup] OLLAMA_MAIN_MODEL from env: {ollama_main}")
         api_key      = os.getenv("OPENAI_API_KEY", "") or os.getenv("ANTHROPIC_API_KEY", "")
         self.worker  = WorkerAgent(api_key, self.log_signal, db=self.db,
-                                   chat_ollama_model=ollama_chat)
+                                   chat_ollama_model=ollama_chat,
+                                   primary_ollama_model=ollama_main)  # Main model for tasks
         self.manager = ManagerThread(api_key, self.worker, db=self.db)
         self.summarizer = SummarizerThread(self.worker, db=self.db)
         self.manager.set_summarizer(self.summarizer)  # Connect summarizer to manager
@@ -331,7 +334,7 @@ class MainWindow(QMainWindow):
         if not OLLAMA_AVAILABLE or not ollama:
             return
         try:
-            main_model = os.getenv("OLLAMA_MODEL", "").strip()
+            main_model = os.getenv("OLLAMA_MAIN_MODEL", "").strip() or os.getenv("OLLAMA_MODEL", "").strip()
             chat_model = os.getenv("OLLAMA_CHAT_MODEL", "").strip()
             for model in {main_model, chat_model}:
                 if not model:
@@ -1199,7 +1202,10 @@ class MainWindow(QMainWindow):
                 f"Chars: {int(stats.get('total_chars') or 0):,}"
             )
             self.db_actions_list.clear()
-            for a in self.db.get_recent_actions(20):
+            recent_actions = self.db.get_recent_actions(20)
+            if not recent_actions:
+                self.db_actions_list.addItem("(no recent actions)")
+            for a in recent_actions:
                 ts = self.db.ts_to_str(a["ts"])
                 self.db_actions_list.addItem(
                     f"[{ts}] {a['trigger']}: {a['action_text'][:80]}")
@@ -1211,7 +1217,7 @@ class MainWindow(QMainWindow):
                     f"[{ts}] {str(c['provider']):6} "
                     f"{str(c['model'])[:24]:24} "
                     f"{str(c['latency_ms'] or 0):>5}ms {status}")
-            self.db_calls_edit.setPlainText("\n".join(lines))
+            self.db_calls_edit.setPlainText("\n".join(lines) if lines else "(no LLM calls logged yet)")
         except Exception as e:
             self.db_stats_label.setText(f"DB error: {e}")
 
@@ -1519,8 +1525,11 @@ class MainWindow(QMainWindow):
         set_key(env, "OPENAI_MODEL",        self.openai_model_edit.text())
         set_key(env, "ANTHROPIC_API_KEY",   self.anthropic_key_edit.text())
         set_key(env, "ANTHROPIC_MODEL",     self.anthropic_model_edit.text())
-        set_key(env, "OLLAMA_MODEL",        self.ollama_model_combo.currentText())
-        set_key(env, "OLLAMA_CHAT_MODEL",   self.ollama_chat_model_combo.currentText().strip())
+        main_model = self.ollama_model_combo.currentText().strip()
+        chat_model = self.ollama_chat_model_combo.currentText().strip()
+        set_key(env, "OLLAMA_MODEL",        main_model)
+        set_key(env, "OLLAMA_MAIN_MODEL",   main_model)
+        set_key(env, "OLLAMA_CHAT_MODEL",   chat_model)
         set_key(env, "DISABLE_OPENAI",      str(self.disable_openai.isChecked()))
         set_key(env, "DISABLE_ANTHROPIC",   str(self.disable_anthropic.isChecked()))
         set_key(env, "DISABLE_OLLAMA",      str(self.disable_ollama.isChecked()))
@@ -1551,6 +1560,9 @@ class MainWindow(QMainWindow):
 
         # Update live objects
         self.worker.max_file_size = self.max_file_spin.value() * 1024 * 1024
+        # Update live model routing without requiring app restart.
+        self.worker._ollama_model_override = main_model or None
+        self.worker._chat_ollama_model_override = chat_model or None
         self.manager.HEARTBEAT_INTERVAL = self.polling_spin.value()
         self.manager._research_cache_ttl = self.research_cache_ttl_spin.value()
         if hasattr(self, "agents_tab"):
