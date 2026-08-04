@@ -19,8 +19,8 @@ Requires: Python 3.11+, Ollama (local LLM server), PySide6.
 
 ## Architecture
 
-- **Main model** (I use gemma-4-E2B - GPU): Heavy analysis, code work, decisions
-- **Chat model** (I use LFM2.5-1.2B - CPU): Fast conversation (~2s responses)
+- **Main model** (gemma-4-E2B): Heavy analysis, code work, decisions
+- **Chat model** (LFM2.5-1.2B): Fast conversation (~2s responses)
 - **Multi-agent system**: Manager, Coordinator, Coder, Summarizer, JobSearch, Analyst
 - **Cross-model communication**: SharedContext JSON file
 - **Secure execution**: 5-stage action pipeline with validation
@@ -80,6 +80,6 @@ Key settings:
 ## Requirements
 
 - GPU: 6GB VRAM minimum (GTX 1660 Super or better)
-- RAM: 32GB recommended, depending on models or model used.
+- RAM: 32GB recommended
 - Storage: 5GB+ for models and databases
 - Ollama server running locally at `127.0.0.1:11434`

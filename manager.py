@@ -84,7 +84,9 @@ _INTENT_KEYWORDS = {
     "task":     ["improve", "fix", "refactor", "add", "implement", "update",
                  "create", "optimize", "scan", "review", "build", "write"],
     "question": ["what", "how", "why", "which", "when", "status", "explain",
-                 "tell me", "describe", "show", "list", "report"],
+                 "tell me", "describe", "show", "list", "report", 
+                 "contact", "reach", "communicate", "talk", "chat",
+                 "can you", "could you", "able to", "must i"],
     "command":  ["pause", "stop", "start", "reset", "clear", "run", "execute",
                  "assign", "search", "scan jobs"],
 }
@@ -103,9 +105,27 @@ _WORKER_ROUTING = {
 
 
 def _classify_intent(text: str) -> str:
+    """Classify intent as task, question, or command."""
     lower = text.lower()
     scores = {intent: sum(1 for kw in kws if kw in lower)
               for intent, kws in _INTENT_KEYWORDS.items()}
+    
+    # Question precedence: only classify as question if:
+    # 1. Question keywords exist, AND
+    # 2. Question score > 0, AND  
+    # 3. Either no task keywords, OR question_score > task_score
+    question_score = scores.get("question", 0)
+    task_score = scores.get("task", 0)
+    
+    # Only override to question if there are clear conversational indicators
+    # (multi-word phrases like "can you", "tell me", or exclusive question keywords)
+    if question_score > 0:
+        # Check for multi-word conversational cues (stronger signal)
+        has_conv_cue = any(cue in lower for cue in ["can you", "could you", "tell me", 
+                           "must i", "able to", "contact me", "reach me"])
+        if has_conv_cue or task_score == 0:
+            return "question"
+    
     best = max(scores, key=scores.get)
     return best if scores[best] > 0 else "question"
 
