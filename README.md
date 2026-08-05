@@ -19,8 +19,8 @@ Requires: Python 3.11+, Ollama (local LLM server), PySide6.
 
 ## Architecture
 
-- **Main model** (gemma-4-E2B): Heavy analysis, code work, decisions
-- **Chat model** (LFM2.5-1.2B): Fast conversation (~2s responses)
+- **Main model** (gemma-4-E2B or whatever model you choose): GPU - Heavy analysis, code work, decisions
+- **Chat model** (LFM2.5-1.2B or whatever model you choose): CPU - Fast conversation (~2s responses)
 - **Multi-agent system**: Manager, Coordinator, Coder, Summarizer, JobSearch, Analyst
 - **Cross-model communication**: SharedContext JSON file
 - **Secure execution**: 5-stage action pipeline with validation
