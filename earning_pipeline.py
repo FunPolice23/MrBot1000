@@ -166,32 +166,32 @@ class EarningPipeline:
         return all_opps
 
     def _discover_source(self, source: str) -> List[Opportunity]:
-            """SECURE: Only valid sources allowed - no dead/external APIs."""
-            valid_sources = {
-                "social", "upwork", "fiverr", "airdrop",
-                "defi", "microtask", "content", "dynamic"
-            }
-            if source not in valid_sources:
-                self._log(f"[Discover] Invalid source '{source}' blocked")
-                return []
-        
-            if source == "social":
-                return self._discover_social()
-            elif source == "upwork":
-                return self._discover_upwork()
-            elif source == "fiverr":
-                return self._discover_fiverr()
-            elif source == "airdrop":
-                return self._discover_airdrops()
-            elif source == "defi":
-                return self._discover_defi()
-            elif source == "microtask":
-                return self._discover_microtasks()
-            elif source == "content":
-                return self._discover_content()
-            elif source == "dynamic":
-                return self._discover_dynamic()
+        """SECURE: Only valid sources allowed - no dead/external APIs."""
+        valid_sources = {
+            "social", "upwork", "fiverr", "airdrop",
+            "defi", "microtask", "content", "dynamic"
+        }
+        if source not in valid_sources:
+            self._log(f"[Discover] Invalid source '{source}' blocked")
             return []
+        
+        if source == "social":
+            return self._discover_social()
+        elif source == "upwork":
+            return self._discover_upwork()
+        elif source == "fiverr":
+            return self._discover_fiverr()
+        elif source == "airdrop":
+            return self._discover_airdrops()
+        elif source == "defi":
+            return self._discover_defi()
+        elif source == "microtask":
+            return self._discover_microtasks()
+        elif source == "content":
+            return self._discover_content()
+        elif source == "dynamic":
+            return self._discover_dynamic()
+        return []
 
     def _discover_upwork(self) -> List[Opportunity]:
         client_id = os.getenv("UPWORK_CLIENT_ID", "")
@@ -581,9 +581,7 @@ class EarningPipeline:
     def execute(self, opportunity: Opportunity
                 ) -> PipelineResult:
         """Execute an opportunity action."""
-        if opportunity.source == "clawgig":
-            return self._execute_clawgig(opportunity)
-        elif opportunity.source == "airdrop":
+        if opportunity.source == "airdrop":
             return self._execute_airdrop(opportunity)
         elif opportunity.source == "defi":
             return self._execute_defi(opportunity)
@@ -597,38 +595,6 @@ class EarningPipeline:
                 opportunity=opportunity,
                 action_taken="none",
                 message=f"No executor for {opportunity.source}",
-            )
-
-    def _execute_clawgig(self, opp: Opportunity) -> PipelineResult:
-        api_key = os.getenv("CLAWGIG_API_KEY", "")
-        if not api_key:
-            return PipelineResult(
-                success=False,
-                opportunity=opp,
-                action_taken="apply",
-                message="Cannot apply: no CLAWGIG_API_KEY set",
-            )
-
-        client = ClawGigClient(api_key)
-        try:
-            result = client.apply_gig(opp.id, "Test proposal from MrBot1000")
-            opp.status = "applied"
-            self.memory.update_reputation("ClawGig", True, opp.estimated_usd_value)
-            self.memory.record_outcome(opp.id, "apply", "Applied", 
-                                       opp.estimated_usd_value, 0.5, True, [opp.source])
-            return PipelineResult(
-                success=True,
-                opportunity=opp,
-                action_taken="apply",
-                message=f"Applied to gig: {result}",
-            )
-        except Exception as e:
-            self.memory.update_reputation("ClawGig", False)
-            return PipelineResult(
-                success=False,
-                opportunity=opp,
-                action_taken="apply",
-                message=f"Apply failed: {e}",
             )
 
     def _execute_airdrop(self, opp: Opportunity) -> PipelineResult:

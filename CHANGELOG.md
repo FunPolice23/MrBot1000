@@ -1,5 +1,39 @@
 # MrBot1000 v2.0 - CHANGELOG
 
+## Update 2026-08-05 - ClawGig Removal & Chat Routing Improvements
+
+### Coordinator.py Critical Fixes
+- **Fixed**: `COORDINATOR_SYSTEM` attribute added to `CoordinatorWorker` class (lines 44-51)
+- **Fixed**: `self.SEARCH_SYSTEM` → `self.COORDINATOR_SYSTEM` on lines 82 and 127
+- **Verification**: Both `llm()` calls now use proper system prompt for cross-model coordination
+
+### ClawGig References Removed
+- **Removed**: All ClawGig references from `earning_pipeline.py`, `manager.py`, `test_earning_pipeline.py`
+- **File**: `earning_pipeline.py`
+- **Change**: Removed `_execute_clawgig()` method and `clawgig` source routing
+- **Impact**: Cleaner codebase, no dead API references
+
+### Intent Classification Improved
+- **Fixed**: `_classify_intent()` function in `manager.py` now properly distinguishes task-like questions from true questions
+- **Change**: Task keywords (fix, improve, refactor, etc.) now take precedence over question keywords; added exclusive question detection
+- **Impact**: Queries like "Can you fix the bug?" now correctly routed to Coder instead of Summarizer for generic response
+
+### Updated Prompts
+- **Fixed**: CEO_SYSTEM and _FOCUS_AREAS in `manager.py` now reference active platforms (Reddit, Fiverr, Upwork) instead of discontinued ClawGig
+- **Impact**: Accurate system guidance for workers
+
+### Chat/Task Routing Improvements
+- **Added**: `set_summarizer()` method to `ManagerThread` for chat result routing
+- **Added**: `_emit_task_result()` method to emit worker results to summarizer
+- **Added**: `emit_chat` parameter to `_full_cycle()` to control chat pollution
+- **Changed**: `_handle_chat()` now passes `emit_chat=False` for human-initiated tasks
+- **Changed**: `_full_cycle()` heartbeat calls pass `emit_chat=False` to suppress noise
+- **Changed**: `_emit_task_result()` now properly extracts "RESULT:" content, not just raw text
+- **Changed**: Result display limit increased from 300 → 1500 characters
+- **Impact**: Heartbeat decisions no longer pollute the chat; human questions receive proper full results via Summarizer; results show complete info instead of truncation
+
+---
+
 ## Update 2026-08-04 - Chat, Security & Documentation
 
 ### Documentation Enhanced

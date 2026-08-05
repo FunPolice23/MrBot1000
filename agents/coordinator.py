@@ -41,6 +41,15 @@ class CoordinatorWorker(WorkerAgent):
     Handles chat⇄main model communication and task distribution.
     """
 
+    # System prompt for coordination tasks
+    COORDINATOR_SYSTEM = (
+        "You are the Coordinator in MrBot1000, managing cross-model communication "
+        "between the fast chat model and accurate main model. "
+        "Your job is to route tasks appropriately, coordinate responses, "
+        "and maintain shared state between models. "
+        "Be concise and action-oriented. Max 200 words."
+    )
+
     def __init__(self, api_key: str, log_signal, db=None):
         super().__init__(api_key, log_signal, db=db)
         self._logger = AgentLogger(db=db, source="Coordinator", signal=log_signal)
@@ -70,7 +79,7 @@ class CoordinatorWorker(WorkerAgent):
                   .instruction("Provide a coordinated response addressing the request.")
                   .build())
 
-        response = self.llm(system=self.SEARCH_SYSTEM, user=prompt, chat=True)
+        response = self.llm(system=self.COORDINATOR_SYSTEM, user=prompt, chat=True)
         self._update_shared_state("last_coordinated_response", response)
 
         return response
@@ -115,7 +124,7 @@ class CoordinatorWorker(WorkerAgent):
                               "Return JSON: {'main': '...', 'chat': '...'}")
                   .build())
 
-        response = self.llm(system=self.SEARCH_SYSTEM, user=prompt, chat=True)
+        response = self.llm(system=self.COORDINATOR_SYSTEM, user=prompt, chat=True)
         parser = ResponseParser(response)
         data = parser.json_object()
 

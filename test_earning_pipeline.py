@@ -214,12 +214,10 @@ class TestIntegration(unittest.TestCase):
 
     def setUp(self):
         self.tmp_db = tempfile.mktemp(suffix=".db", prefix="hermes-int-")
-        os.environ["CLAWGIG_API_KEY"] = "test-key"  # Dummy key for testing
 
     def tearDown(self):
         if os.path.exists(self.tmp_db):
             os.unlink(self.tmp_db)
-        os.environ.pop("CLAWGIG_API_KEY", None)
 
     def test_full_workflow(self):
         from earning_pipeline import EarningPipeline

@@ -1,45 +1,13 @@
 """
-manager.py - Agent Orchestration and Management
-===============================================
-
-AGENT COORDINATION LAYER
-
-This file contains:
-- ManagerThread class: Main orchestration thread
-- Agent lifecycle: Start, pause, stop agents
-- Task routing: Human input -> appropriate agent
-- Intent classification: question vs task routing
-- Heartbeat: Agent status monitoring
-
-USAGE:
-    managed by MainWindow in main.py
-
-KEY COMPONENTS:
-    - ManagerThread: QThread that runs continuously
-    - _classify_intent(): Determines question vs task routing
-    - _handle_human_message(): Routes user input to agents
-    - stop(): Graceful shutdown
-    - CoordinatorWorker: Cross-model communication
-
-AGENT ROUTING:
-    - question/conversation -> Summarizer (chat mode!)
-    - code task            -> Coder
-    - job search           -> JobSearch
-    - analysis             -> Analyst
-
-TODO: Add more detailed section markers for each method group
-"""
-
-"""
-manager.py — CEO ManagerThread  (v4 — Shared Context Edition)
+manager.py — CEO ManagerThread  (v3 — Worker Roster Edition)
 
 The Manager now acts as a CEO managing a team of specialized workers:
   • Maintains a worker roster (name → WorkerAgent subclass)
   • Routes tasks to the most appropriate worker based on specialty
   • Monitors the job search queue and assigns gigs to workers
-  • Coordinates multi-worker tasks via shared context
-  • SharedContext enables cross-model communication between main and chat models
-  • New signals: worker_assigned, job_found, model_signal
+  • Coordinates multi-worker tasks
+  • Separate chat prompt that stays management-focused
+  • New signals: worker_assigned, job_found
 """
 
 import json
@@ -49,22 +17,6 @@ import time
 import os
 from typing import Dict, List, Optional
 from PySide6.QtCore import QThread, Signal
-
-# Worker imports
-from agents.base_worker import WorkerAgent
-from agents.job_search_worker import JobSearchWorker
-from agents.summarizer import SummarizerThread
-from agents.coordinator import CoordinatorWorker
-
-
-class SimpleLogger:
-    """Simple logger wrapper for workers that don't have access to QSignal."""
-    def __init__(self):
-        self.messages = []
-    
-    def emit(self, msg):
-        self.messages.append(msg)
-        print(f"[Coordinator] {msg}")
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Focus areas rotate through per heartbeat
@@ -82,16 +34,14 @@ _FOCUS_AREAS = [
 
 _INTENT_KEYWORDS = {
     "task":     ["improve", "fix", "refactor", "add", "implement", "update",
-                 "create", "optimize", "scan", "review", "build", "write",
-                 "analyze", "audit", "examine", "examine code", "security check"],
+                 "create", "optimize", "scan", "review", "build", "write"],
     "question": ["what", "how", "why", "which", "when", "status", "explain",
-                 "tell me", "describe", "show", "list", "report", 
-                 "contact", "reach", "communicate", "talk", "chat"],
+                 "tell me", "describe", "show", "list", "report"],
     "command":  ["pause", "stop", "start", "reset", "clear", "run", "execute",
                  "assign", "search", "scan jobs"],
 }
 
-# Worker specialty routing keywords (updated for active platforms)
+# Worker specialty routing keywords
 _WORKER_ROUTING = {
     "JobSearch":  ["job", "gig", "find work", "search", "reddit", "fiverr",
                    "upwork", "social", "earn", "apply", "listing", "opportunity"],
@@ -110,18 +60,25 @@ def _classify_intent(text: str) -> str:
     scores = {intent: sum(1 for kw in kws if kw in lower)
               for intent, kws in _INTENT_KEYWORDS.items()}
     
-    # Question precedence: classify as question only when task intent is absent.
-    # This avoids polite task phrasing like "can you fix..." being misrouted.
     question_score = scores.get("question", 0)
     task_score = scores.get("task", 0)
     
-    # Only override to question if there are clear conversational indicators
-    # (multi-word phrases like "can you", "tell me", or exclusive question keywords)
-    if question_score > 0 and task_score == 0:
-        # Check for multi-word conversational cues (stronger signal)
+    # Task keywords take precedence over question keywords
+    # This avoids polite phrasing like "can you fix..." being misrouted as questions
+    if task_score > 0:
+        return "task"
+    
+    # Only classify as question if there are clear conversational indicators
+    # and no task keywords
+    if question_score > 0:
         has_conv_cue = any(cue in lower for cue in ["can you", "could you", "tell me", 
-                           "must i", "able to", "contact me", "reach me"])
-        if has_conv_cue or task_score == 0:
+                           "must i", "able to", "contact me", "reach me",
+                           "explain", "what is", "how does", "show me"])
+        # Exclusive question keywords (not mixed with task)
+        exclusive_question = all(kw not in lower for kw in ["fix", "improve", "refactor", "add",
+                                                              "implement", "update", "create",
+                                                              "write", "scan", "review", "audit"])
+        if has_conv_cue and exclusive_question:
             return "question"
     
     best = max(scores, key=scores.get)
@@ -147,7 +104,7 @@ class ManagerThread(QThread):
 
     # ── UI signals ────────────────────────────────────────────────────────────
     log          = Signal(str)
-    chat_reply   = Signal(str, str)      # (label, full_text)
+    chat_reply   = Signal(str, str)      # (label, text)
     agent_status = Signal(str, str)      # (status, task)
 
     # ── New roster/job signals ────────────────────────────────────────────────
@@ -162,22 +119,20 @@ class ManagerThread(QThread):
     # ══════════════════════════════════════════════════════════════════════════
 
     CEO_SYSTEM = (
-        "You are the CEO of MrBot1000, an autonomous AI freelance agency. "
-        "You manage a team of specialized AI workers:\n"
-        "  • Coder        — Python coding, refactoring, bug fixing\n"
-        "  • Analyst      — code quality metrics, complexity, reports\n"
-        "  • JobSearch    — finds gigs on Reddit, Fiverr, Upwork, social platforms\n"
-        "  • Summarizer   — explains agent activity in plain language\n"
-        "  • Earning      — manages crypto airdrops, DeFi, microtasks\n"
-        "Core goals: 1) Win profitable gigs  2) Improve team code  "
-        "3) Maximize USDC earnings  4) Self-upgrade workers.\n"
-        "Given the context, decide the single most impactful next action.\n"
-        "Respond in EXACTLY one of these formats:\n"
-        "  ACTION[Coder]: <specific coding task>\n"
-        "  ACTION[Analyst]: <analysis task>\n"
-        "  ACTION[JobSearch]: <search/apply task>\n"
+            "You are the CEO of MrBot1000, an autonomous AI freelance agency. "
+            "You manage a team of specialized AI workers:\n"
+            "  • Coder        — Python coding, refactoring, bug fixing\n"
+            "  • Analyst      — code quality metrics, complexity, reports\n"
+            "  • JobSearch    — finds gigs on Reddit, Fiverr, Upwork, social platforms\n"
+            "  • Summarizer   — explains agent activity in plain language\n"
+            "Core goals: 1) Win profitable gigs  2) Improve team code  "
+            "3) Maximize USDC earnings  4) Self-upgrade workers.\n"
+            "Given the context, decide the single most impactful next action.\n"
+            "Respond in EXACTLY one of these formats:\n"
+            "  ACTION[Coder]: <specific coding task>\n"
+            "  ACTION[Analyst]: <analysis task>\n"
+            "  ACTION[JobSearch]: <search/apply task>\n"
         "  ACTION[Manager]: <direct management task>\n"
-        "  ACTION[Summarizer]: <summarization task>\n"
         "  NO_ACTION: <brief reason>\n"
         "  ESCALATE: <reason needing human input>\n"
         "Keep response under 180 words. Reference filenames when possible."
@@ -229,31 +184,19 @@ class ManagerThread(QThread):
         self._last_actions: List[str] = []
         self._last_llm_time  = 0.0
         self._min_llm_gap    = 2.0
-        self._last_heartbeat_emit = 0.0
 
         self._last_research      = None
         self._last_research_time = 0.0
 
         self._chat_history: List[dict] = []
-        self._chat_queue = queue.Queue()  # For routing chat to Summarizer
-        self._summarizer = None  # Set via set_summarizer()
+        self._summarizer = None  # Will be set via set_summarizer()
 
         # ── Worker roster ──────────────────────────────────────────────────────
         # name → {"worker": WorkerAgent, "busy": bool, "current_task": str}
         self._roster: Dict[str, dict] = {
             "Coder": {"worker": worker, "busy": False, "current_task": ""}
         }
-        # Coordinator handles chat+main model collaboration
-        self._log = SimpleLogger()  # Temporary logger
-        self._coordinator = CoordinatorWorker(None, self._log.emit, db=self.db)
-        self._roster["Coordinator"] = {
-            "worker": self._coordinator,
-            "busy": False,
-            "current_task": "",
-            "specialty": "cross-model communication"
-        }
         self._job_queue: List[dict] = []   # queued gigs from JobSearchWorker
-        self._shared_ctx: Optional[object] = None  # Lazy-loaded
 
     # ── Properties ────────────────────────────────────────────────────────────
 
@@ -264,27 +207,6 @@ class ManagerThread(QThread):
     @HEARTBEAT_INTERVAL.setter
     def HEARTBEAT_INTERVAL(self, v):
         self._heartbeat_interval = max(10, int(v))
-
-    # ── Shared Context ────────────────────────────────────────────────────────
-
-    @property
-    def shared_context(self):
-        """Access to SharedContext for cross-model communication."""
-        if self._shared_ctx is None:
-            from agents.shared_context import get_shared_context
-            self._shared_ctx = get_shared_context()
-        return self._shared_ctx
-
-    def update_shared_state(self, key: str, value, model_name: str = "Manager"):
-        """Update shared context with a decision or result."""
-        ctx = self.shared_context
-        ctx.update_model_context(
-            model_name,
-            current_task=key,
-            reasoning_chain=[f"Update: {key} = {value}"],
-            key_decisions=[{"decision": key, "value": value, "at": time.time()}]
-        )
-        self._m_think(f"Shared state: {key} = {value}")
 
     # ── Roster management ─────────────────────────────────────────────────────
 
@@ -341,6 +263,29 @@ class ManagerThread(QThread):
 
     def set_paused(self, paused: bool):
         self.paused = paused
+
+    def set_summarizer(self, summarizer):
+        """Store reference to summarizer for chat result routing."""
+        self._summarizer = summarizer
+
+    def _emit_task_result(self, worker_name: str, result: str, task: str):
+            """Emit task result for summarizer to format and display."""
+            # Extract the actual result (after RESULT: if present)
+            if "RESULT:" in result:
+                actual_result = result.split("RESULT:")[-1].strip()
+            elif result.strip().upper().startswith("RESULT:"):
+                actual_result = result.split("RESULT:")[1].strip()
+            else:
+                actual_result = result.strip()
+        
+            # Limit to 1500 chars for reasonable display
+            if len(actual_result) > 1500:
+                actual_result = actual_result[:1500] + "..."
+        
+            summary_text = f"{actual_result}"
+            self._summarizer.add_manager_thought(f"[{worker_name}] Result: {summary_text}")
+            # Emit via chat_reply - the label will be the worker name
+            self.chat_reply.emit(worker_name, summary_text)
 
     # ── Logging helpers ───────────────────────────────────────────────────────
 
@@ -429,7 +374,7 @@ class ManagerThread(QThread):
         research_path = research.get("research_path") or "not set"
         root_part     = root_text[:4000]
 
-        # Roster context with job queue
+        # Roster context
         roster_lines = []
         for name, info in self._roster.items():
             status = "BUSY" if info["busy"] else "free"
@@ -490,8 +435,23 @@ class ManagerThread(QThread):
 
     def _llm_call(self, system: str, user: str, trigger: str) -> str:
         self._rate_limit()
-        result = self.worker.llm(system=system, user=user, trigger=trigger)
+        t0 = time.time()
+        result = self.worker.llm(system=system, user=user)
         self._last_llm_time = time.time()
+        latency = int((time.time() - t0) * 1000)
+        if self.db:
+            try:
+                self.db.log_llm_call(
+                    model=getattr(self.worker, "last_model", "unknown"),
+                    provider=getattr(self.worker, "last_provider", "unknown"),
+                    trigger=trigger,
+                    prompt_chars=len(system) + len(user),
+                    response_chars=len(result),
+                    latency_ms=latency,
+                    error=result if result.startswith("ERROR:") else None
+                )
+            except Exception:
+                pass
         return result
 
     def _history_suffix(self) -> str:
@@ -547,142 +507,230 @@ class ManagerThread(QThread):
             f"Manager directive: {action}\n\n"
             f"Available file context:\n{context[:8000]}"
         )
-        try:
-            result = w.llm(
-                system=self.WORKER_SYSTEM,
-                user=agent_prompt,
-                chat=False,
-                trigger=f"worker_exec:{worker_name}"
-            )
-            self._a_think(f"[{worker_name}] Result:\n{result}")
-            result_short = (result.split("RESULT:")[-1].strip()
-                             if "RESULT:" in result else result)
-            return result_short
-        except Exception as e:
-            err = f"{worker_name} execution failed: {e}"
-            self._a_think(err)
-            return f"ERROR: {err}"
-        finally:
-            self._set_worker_free(worker_name)
+        result = w.llm(system=self.WORKER_SYSTEM, user=agent_prompt, chat=True)
 
-    def stop(self):
-        """Signal the manager to stop running."""
-        self.running = False
-        self._m_think("Manager stop requested")
-
-    def set_summarizer(self, summarizer):
-        """Set the summarizer instance (called from MainWindow)."""
-        self._summarizer = summarizer
+        self._a_think(f"[{worker_name}] Result:\n{result}")
+        result_short = (result.split("RESULT:")[-1].strip()
+                        if "RESULT:" in result else result[:200])
+        self._communicate("A→M", f"[{worker_name}] {result_short}")
+        self._set_worker_free(worker_name)
         
-    def route_chat(self, text: str):
-        """Route a chat message to the summarizer (thread-safe)."""
-        if self._summarizer:
-            self._summarizer.send_human_message(text)
-        else:
-            self.log.emit("Summarizer not ready")
+        # Emit task result for chat display
+        self._emit_task_result(worker_name, result, action)
+        
+        return result
 
-    # ── Main execution ──────────────────────────────────────────────────────
+    def _full_cycle(self, trigger_label: str, manager_prompt: str, context: str,
+                    emit_chat: bool = True):
+        decision = self._ceo_decide(trigger_label, manager_prompt)
+        if emit_chat:
+            self.chat_reply.emit(trigger_label, decision)
+
+        if decision.startswith("ERROR:"):
+            self.log.emit(f"CEO LLM error: {decision}")
+            return
+
+        dtype, worker_name, content = self._parse_decision(decision)
+
+        if dtype == "no_action":
+            self.log.emit(f"CEO: No action — {content[:80]}")
+            self._m_think(f"No action needed: {content}")
+            return
+
+        if dtype == "escalate":
+            self.log.emit(f"CEO: Escalating — {content[:80]}")
+            self._m_think(f"Escalated: {content}")
+            return
+
+        if dtype in ("action",):
+            action = content
+            self.log.emit(f"CEO → [{worker_name}] {action[:80]}")
+            self._last_actions.append(f"[{worker_name}] {action}")
+            if len(self._last_actions) > 20:
+                self._last_actions.pop(0)
+
+            if self.db:
+                try:
+                    self.db.log_decision(trigger_label, decision, action)
+                    self.db.log_action(trigger_label, f"[{worker_name}] {action}")
+                except Exception:
+                    pass
+
+            exec_result = self._execute_with_worker(worker_name, action, context)
+            if self.db:
+                try:
+                    snippet = (exec_result.split("RESULT:")[-1].strip()[:300]
+                               if "RESULT:" in exec_result else exec_result[:300])
+                    self.db.log_action(f"{trigger_label}/{worker_name}", snippet)
+                except Exception:
+                    pass
+        else:
+            self.log.emit(f"CEO: unclear response: {decision[:100]}")
+            self._m_think("CEO response lacked ACTION/NO_ACTION/ESCALATE.")
+
+    # ── Chat handler ──────────────────────────────────────────────────────────
+
+    def _handle_chat(self, human_text: str, research: dict):
+        intent = _classify_intent(human_text)
+        self._m_think(f"Chat intent: {intent}")
+        context = self._build_context(research, human_text)
+
+        if intent == "task":
+            self._m_think("Routing as task — running full CEO cycle")
+            prompt = (
+                f"Human operator task: {human_text}\n\n"
+                f"Plan which team member handles this and what they should do.\n\n"
+                f"{context}"
+            )
+            # Don't emit the decision to chat for human tasks - only show the final result
+            self._full_cycle(f"Chat-task: {human_text[:40]}", prompt, context,
+                             emit_chat=False)
+
+        elif intent == "command":
+            lower = human_text.lower()
+            if "pause" in lower:
+                self.set_paused(True)
+                self.chat_reply.emit("System", "⏸ Heartbeat paused.")
+            elif "resume" in lower or "start" in lower:
+                self.set_paused(False)
+                self.chat_reply.emit("System", "▶ Heartbeat resumed.")
+            elif "clear" in lower and "cache" in lower:
+                self.invalidate_cache()
+                if self.db:
+                    try: self.db.clear_file_cache()
+                    except Exception: pass
+                self.chat_reply.emit("System", "🗑 Cache cleared.")
+            elif "scan jobs" in lower or "search" in lower:
+                self.task_queue.put("run job search cycle now")
+                self.chat_reply.emit("System", "🔍 Job search queued.")
+            elif "roster" in lower or "team" in lower:
+                lines = ["**Team roster:**"]
+                for name, info in self._roster.items():
+                    status = "🔴 BUSY" if info.get("busy") else "🟢 Free"
+                    task = f" — {info.get('current_task','')[:40]}" if info.get("busy") else ""
+                    lines.append(f"  {name}: {status}{task}")
+                self.chat_reply.emit("Roster", "\n".join(lines))
+            else:
+                self.chat_reply.emit(
+                    "System", f"Unknown command: {human_text}")
+
+        else:
+            # Conversational question — CEO answers
+            self._chat_history.append({"role": "user", "content": human_text})
+            if len(self._chat_history) > 20:
+                self._chat_history = self._chat_history[-20:]
+
+            history_str = "\n".join(
+                f"{m['role'].upper()}: {m['content']}"
+                for m in self._chat_history[-6:]
+            )
+            chat_prompt = (
+                f"Conversation:\n{history_str}\n\n"
+                f"Context:\n{context[:5000]}"
+            )
+            self._m_think(f"CEO answering: {human_text[:80]}")
+            answer = self._llm_call(self.CHAT_SYSTEM, chat_prompt, "chat")
+            self._chat_history.append({"role": "assistant", "content": answer})
+            self.chat_reply.emit("Answer", answer)
+            self._m_think(f"CEO answer:\n{answer}")
+
+    # ── Job queue processing ──────────────────────────────────────────────────
+
+    def _process_job_queue(self):
+        if not self._job_queue:
+            return
+        job = self._job_queue[0]
+        free_w = self.get_free_worker(job.get("assigned_to", "Coder"))
+        if not free_w:
+            return
+        self._m_think(
+            f"Assigning gig to {free_w}: {job.get('title','')[:60]}")
+        task = (
+            f"Prepare a proposal for this gig:\n"
+            f"Title: {job.get('title','')}\n"
+            f"Budget: ${job.get('budget',0):.0f}\n"
+            f"Description: {job.get('description','')[:300]}\n"
+            f"Skills: {', '.join(job.get('skills',[]))}"
+        )
+        self._job_queue.pop(0)
+        self._execute_with_worker(free_w, task, "")
+
+    # ── Main loop ─────────────────────────────────────────────────────────────
 
     def run(self):
-        self.log.emit("ManagerThread started")
-        self.agent_status.emit("Ready", "Waiting for work")
+        self._sys("CEO ManagerThread started — autonomous heartbeat active")
+        self.log.emit("CEO ManagerThread started — autonomous heartbeat active")
+
+        startup_delay = int(os.getenv("STARTUP_DELAY_SECS", 5))
+        if startup_delay > 0:
+            self._m_think(f"Startup delay: {startup_delay}s")
+            time.sleep(startup_delay)
+
+        last_heartbeat = 0.0
 
         while self.running:
-            if self.paused:
+            now = time.time()
+
+            # 1. Explicit queued tasks (highest priority)
+            try:
+                task = self.task_queue.get_nowait()
+                self._m_think(f"Task received: {task}")
+                research = self._get_research()
+                context  = self._build_context(research, task)
+                prompt   = (
+                    f"Task assigned by operator: {task}\n\n"
+                    f"Assign to the right team member and execute.\n\n"
+                    f"{context}"
+                )
+                self._full_cycle(f"Task: {task[:40]}", prompt, context)
+                self.agent_status.emit("Idle", "Ready")
+                last_heartbeat = now
+                time.sleep(2)
+                continue
+            except queue.Empty:
+                pass
+
+            # 2. Human chat (unaffected by pause)
+            try:
+                human_text = self.human_queue.get_nowait()
+                self._m_think(f"Human message: {human_text}")
+                research = self._get_research()
+                self._handle_chat(human_text, research)
+                self.agent_status.emit("Idle", "Ready")
+                last_heartbeat = now
+                time.sleep(2)
+                continue
+            except queue.Empty:
+                pass
+
+            # 3. Process job queue if jobs are waiting and workers are free
+            if self._job_queue and not self.paused:
+                self._process_job_queue()
                 time.sleep(1)
                 continue
 
-            # Check human queue first
-            try:
-                human_msg = self.human_queue.get_nowait()
-                self._handle_human_message(human_msg)
-            except queue.Empty:
-                pass
+            # 4. Autonomous heartbeat
+            if not self.paused and (now - last_heartbeat) >= self._heartbeat_interval:
+                focus = _FOCUS_AREAS[self._focus_index % len(_FOCUS_AREAS)]
+                self._focus_index += 1
+                self._m_think(f"Heartbeat — focus: {focus}")
 
-            # Check task queue
-            try:
-                task = self.task_queue.get_nowait()
-                self._handle_task(task)
-            except queue.Empty:
-                pass
+                research = self._get_research(force=True)
+                context  = self._build_context(research, focus)
+                prompt   = (
+                    f"Heartbeat focus: {focus}\n"
+                    "Review the team and research files. "
+                    "Identify the single most impactful action right now. "
+                    "Assign it to the right team member.\n\n"
+                    f"{context}"
+                )
+                self._full_cycle("Heartbeat", prompt, context, emit_chat=False)
+                self.agent_status.emit("Idle", "Ready")
+                last_heartbeat = now
+                time.sleep(2)
+                continue
 
-            # Periodic heartbeat
-            self._heartbeat()
+            time.sleep(1)
 
-            # Process any new jobs from JobSearchWorker
-            for job in self._job_queue[:3]:
-                self._process_job(job)
-
-            time.sleep(0.5)
-
-        self.log.emit("ManagerThread stopped")
-
-    def _handle_human_message(self, text: str):
-        self._m_think(f"Human: {text[:80]}")
-        intent = _classify_intent(text)
-        self._m_think(f"Intent classified: {intent}")
-
-        if intent == "task":
-            # Direct task - route to appropriate worker
-            worker = _route_to_worker(text)
-            self._execute_workflow(text, worker)
-        elif intent in ("conversation", "question"):
-            # Chat - route to Summarizer's chat interface (uses chat model)
-            self.route_chat(text)
-        else:
-            # Other - use CEO to decide (might route to Coder, JobSearch, etc.)
-            decision = self._ceo_decide("human_chat", text)
-            self._process_decision(decision, "human_chat")
-
-    def _handle_task(self, task: str):
-        self._m_think(f"Task from queue: {task[:50]}")
-        worker = _route_to_worker(task)
-        self._execute_workflow(task, worker)
-
-    def _execute_workflow(self, task: str, worker_name: str, skip_research: bool = False):
-        # For chat-only tasks (Summarizer), skip the expensive research step
-        if not skip_research:
-            context = self._get_research()
-        else:
-            context = {"mode": "chat_only"}
-        full_context = self._build_context(context, task)
-
-        result = self._execute_with_worker(worker_name, task, full_context)
-        self._last_actions.append(f"{worker_name}: {task[:40]}")
-        if len(self._last_actions) > 30:
-            self._last_actions.pop(0)
-
-        # Send the concrete worker result back to the chat surface.
-        self.chat_reply.emit(
-            "Task Result",
-            f"{worker_name} handled: {task}\n\nResult:\n{result}"
-        )
-
-        # Update shared state
-        self.update_shared_state(f"action_{int(time.time())}", task[:60])
-
-    def _process_decision(self, decision: str, trigger: str):
-        dtype, worker, payload = self._parse_decision(decision)
-
-        if dtype == "action":
-            self._execute_workflow(payload, worker)
-        elif dtype == "no_action":
-            self._m_think(f"No action: {payload}")
-        elif dtype == "escalate":
-            self._communicate("ESCALATE", payload)
-
-    def _process_job(self, job: dict):
-        if job.get("status") != "queued":
-            return
-        # Job is ready for assignment
-        self._m_think(f"Processing job: {job.get('title', '')[:40]}")
-
-    def _heartbeat(self):
-        now = time.time()
-        if (now - self._last_heartbeat_emit) < self.HEARTBEAT_INTERVAL:
-            return
-
-        self._focus_index = (self._focus_index + 1) % len(_FOCUS_AREAS)
-        focus = _FOCUS_AREAS[self._focus_index]
-        self.agent_status.emit("Heartbeat", focus)
-        self._last_heartbeat_emit = now
+    def stop(self):
+        self.running = False
