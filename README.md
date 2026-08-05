@@ -1,4 +1,4 @@
-# MrBot1000 v2.0 — AI-Powered Earning Agent
+# MrBot1000 v2.0 — AI-Powered Earning Agent - A W.I.P, not a final product
 
 A real-time AI agent system for automated earning opportunity discovery and execution. Runs entirely locally — no cloud dependencies, no data sharing.
 
