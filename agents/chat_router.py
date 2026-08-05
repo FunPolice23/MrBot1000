@@ -123,6 +123,20 @@ class ChatRouter:
                 compact_report = _format_lifecycle_status(lifecycle, compact=compact_enabled)
                 if compact_report:
                     parts.append(compact_report)
+
+            research_snapshot = shared_context.get_latest_research_snapshot()
+            if research_snapshot:
+                path = research_snapshot.get("research_path") or "(not set)"
+                count = research_snapshot.get("research_file_count", 0)
+                excerpt = (research_snapshot.get("research_excerpt") or "").strip()
+                if excerpt:
+                    excerpt = excerpt[:2500]
+                parts.append(
+                    "=== SHARED RESEARCH SNAPSHOT ===\n"
+                    f"Folder: {path}\n"
+                    f"Files scanned: {count}\n"
+                    f"Research excerpt:\n{excerpt or '(no excerpt available)'}"
+                )
         except Exception:
             pass
 

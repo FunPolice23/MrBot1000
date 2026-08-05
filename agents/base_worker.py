@@ -484,12 +484,17 @@ class WorkerAgent:
             except Exception as e:
                 self.log_signal.emit(f"Error scanning research folder: {e}")
 
-        return {
+        payload = {
             "root": root_text,
             "research": research_text,
             "research_path": rf,
             "research_file_count": research_file_count
         }
+        try:
+            self._get_shared_context().update_research_snapshot(payload)
+        except Exception:
+            pass
+        return payload
 
     def file_index(self) -> str:
         """Return a compact index of all files in the research folder."""

@@ -234,6 +234,31 @@ class SharedContext:
         self._write_state(state)
         return snapshot
 
+    def update_research_snapshot(self, research: Dict[str, Any]) -> Dict[str, Any]:
+        """Persist a compact research snapshot so both models can reuse it."""
+        state = self._read_state()
+        payload = {
+            "research_path": research.get("research_path"),
+            "research_file_count": research.get("research_file_count", 0),
+            "root_excerpt": (research.get("root") or "")[:4000],
+            "research_excerpt": (research.get("research") or "")[:4000],
+            "timestamp": time.time(),
+        }
+        state.recent_events.append({
+            "type": "research_snapshot",
+            "source": "shared_context",
+            "data": payload,
+            "timestamp": payload["timestamp"],
+        })
+        self._write_state(state)
+        return payload
+
+    def get_latest_research_snapshot(self) -> Optional[Dict[str, Any]]:
+        """Return the latest shared research snapshot, if available."""
+        state = self._read_state()
+        snapshots = [event["data"] for event in state.recent_events if event.get("type") == "research_snapshot"]
+        return snapshots[-1] if snapshots else None
+
     def get_opportunity_lifecycle(self) -> List[Dict[str, Any]]:
         """Return recent opportunity lifecycle snapshots."""
         state = self._read_state()

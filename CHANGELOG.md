@@ -1,6 +1,12 @@
 # MrBot1000 v2.0 - CHANGELOG
 
-## Update 2026-08-05 - Safe Mode, CLI Shortcut & Startup Validation
+## Update 2026-08-05 - Shared Research Context, Safe Mode & Startup Validation
+
+### Shared Research Knowledge Base
+- **Added**: Research snapshots are now persisted into the shared context layer so both the main-model workflow and the chat-model workflow can reuse the same research knowledge.
+- **Improved**: The chat router now includes the latest shared research snapshot in its runtime context, making conversational responses more grounded and consistent with the manager’s research scans.
+- **Enhanced**: The Management tab now exposes a visible research snapshot so the selected folder’s value is easier to inspect at a glance.
+- **Verified**: New regression coverage confirms that shared research context is available to the chat-side runtime flow.
 
 ### Safe Mode & CLI
 - **Fixed**: The startup crash caused by using the safe-mode flag before the window initialized its state.

@@ -28,6 +28,7 @@ Requires: Python 3.11+, Ollama (local LLM server), and the packages listed in re
 - Tracks opportunities through discovery, application, submission, and payout stages with explicit state transitions
 - Surfaces startup warnings and runtime issues so configuration gaps are visible early
 - Supports a safe mode that validates actions and skips real file changes while the workflow is being exercised
+- Shares research snapshots across the manager and chat-side runtime context so both models can benefit from the same knowledge base
 - Tracks earnings and payouts locally in SQLite
 
 ## Current Workflow

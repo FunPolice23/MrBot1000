@@ -31,6 +31,7 @@ SECURITY:
 import sys
 import os
 import json
+import re
 import urllib.request
 sys.path.insert(0, os.path.dirname(__file__))
 import time
@@ -729,6 +730,20 @@ class MainWindow(QMainWindow):
 
         lay.addWidget(research_group)
 
+        research_snapshot_group = QGroupBox("Research Snapshot")
+        research_snapshot_layout = QVBoxLayout(research_snapshot_group)
+        research_snapshot_layout.setContentsMargins(12, 12, 12, 12)
+        research_snapshot_layout.setSpacing(8)
+        self.research_snapshot_edit = QPlainTextEdit()
+        self.research_snapshot_edit.setReadOnly(True)
+        self.research_snapshot_edit.setPlainText("No research scan yet. Select a folder or run a re-scan.")
+        self.research_snapshot_edit.setStyleSheet(
+            "font-family:Consolas,Monaco,monospace;font-size:11px;"
+            "background:#0a0a0f;color:#d4d4d4;"
+        )
+        research_snapshot_layout.addWidget(self.research_snapshot_edit)
+        lay.addWidget(research_snapshot_group)
+
         lay.addStretch()
         return w
 
@@ -1228,6 +1243,56 @@ class MainWindow(QMainWindow):
 
         return w
 
+    def _build_research_snapshot(self, research: dict) -> str:
+        if not research:
+            return "No research data available yet."
+
+        folder = research.get("research_path") or "(not set)"
+        file_count = int(research.get("research_file_count") or 0)
+        research_text = research.get("research", "")
+        root_text = research.get("root", "")
+
+        files = []
+        for match in re.findall(r"\[([^\]]+)\]", research_text):
+            if match.startswith("ROOT/"):
+                continue
+            if match.startswith("research folder") or match.startswith("path does not exist"):
+                continue
+            if match not in files:
+                files.append(match)
+
+        ext_counts = {}
+        for name in files:
+            ext = Path(name).suffix.lower() or "(no ext)"
+            ext_counts[ext] = ext_counts.get(ext, 0) + 1
+
+        ext_summary = ", ".join(f"{ext}({count})" for ext, count in sorted(ext_counts.items())[:6]) or "none"
+        preview = ", ".join(files[:10]) if files else "(no readable files found)"
+        root_hint = "root files present" if root_text and "(no .py files found" not in root_text else "no root python files found"
+
+        return "\n".join([
+            f"Folder: {folder}",
+            f"Files scanned: {file_count}",
+            f"File types: {ext_summary}",
+            f"Preview: {preview}",
+            f"Root context: {root_hint}",
+            "",
+            "Tip: use this snapshot to judge whether the selected folder provides enough context for the manager.",
+        ])
+
+    def _refresh_research_snapshot(self):
+        try:
+            research = self.worker.research_all()
+            if self.research_folder_label is not None:
+                self.research_folder_label.setText(
+                    f"Research folder: {research.get('research_path') or 'not set'}"
+                )
+            if hasattr(self, "research_snapshot_edit"):
+                self.research_snapshot_edit.setPlainText(self._build_research_snapshot(research))
+        except Exception as exc:
+            if hasattr(self, "research_snapshot_edit"):
+                self.research_snapshot_edit.setPlainText(f"Research error: {exc}")
+
     def select_research_folder(self):
         folder = QFileDialog.getExistingDirectory(
             self, "Select Research Folder")
@@ -1239,6 +1304,7 @@ class MainWindow(QMainWindow):
                 "System", f"Research folder set: {folder}")
             self.manager.invalidate_cache()
             self.manager._reviewed_files.clear()
+            self._refresh_research_snapshot()
 
     def force_safe_improve(self):
         self.manager.queue_task(
@@ -1249,6 +1315,7 @@ class MainWindow(QMainWindow):
         self.manager.invalidate_cache()
         self.manager.queue_task(
             "Research re-scan: review all files and summarize key findings")
+        self._refresh_research_snapshot()
         self.log_signal.emit("Research re-scan queued")
 
     def clear_file_cache(self):
