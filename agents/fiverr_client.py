@@ -7,12 +7,20 @@ public category page scraping to discover gigs.
 
 import time
 import re
+import xml.etree.ElementTree as ET
+from types import SimpleNamespace
 from typing import List, Optional
 from dataclasses import dataclass, field
 
-import feedparser
+try:
+    import feedparser
+except ImportError:  # pragma: no cover - optional dependency fallback
+    feedparser = None
 import requests
-from bs4 import BeautifulSoup
+try:
+    from bs4 import BeautifulSoup
+except ImportError:  # pragma: no cover - optional dependency fallback
+    BeautifulSoup = None
 
 FIVERR_BASE = "https://www.fiverr.com"
 
@@ -64,13 +72,54 @@ class FiverrClient:
             ),
         })
 
+    def _parse_feed(self, feed_url: str):
+        """Parse an RSS/Atom feed, falling back to stdlib XML when feedparser is unavailable."""
+        if feedparser is not None:
+            return feedparser.parse(feed_url)
+
+        try:
+            response = self.session.get(feed_url, timeout=10)
+            response.raise_for_status()
+            root = ET.fromstring(response.text)
+        except Exception:
+            return SimpleNamespace(entries=[])
+
+        entries = []
+        item_elements = []
+        if root.tag.endswith("rss"):
+            channel = root.find("channel")
+            if channel is not None:
+                item_elements = channel.findall("item")
+        elif root.tag.endswith("feed"):
+            item_elements = root.findall(".//entry")
+        else:
+            item_elements = root.findall(".//item")
+
+        for item in item_elements:
+            title_el = item.find("title")
+            summary_el = item.find("description") or item.find("summary")
+            link_el = item.find("link")
+            link = ""
+            if link_el is not None:
+                link = link_el.text or link_el.attrib.get("href", "")
+
+            entry = {
+                "title": title_el.text if title_el is not None and title_el.text else "",
+                "summary": summary_el.text if summary_el is not None and summary_el.text else "",
+                "description": summary_el.text if summary_el is not None and summary_el.text else "",
+                "link": link,
+            }
+            entries.append(entry)
+
+        return SimpleNamespace(entries=entries)
+
     def find_gigs(self, query: str = "python",
                       limit: int = 20) -> List[FiverrGig]:
         """Find gigs via RSS feeds."""
         gigs = []
         for feed_url in self.RSS_FEEDS:
             try:
-                feed = feedparser.parse(feed_url)
+                feed = self._parse_feed(feed_url)
                 for entry in feed.entries[:limit]:
                     title = entry.get("title", "")
                     if query.lower() not in title.lower():
@@ -104,38 +153,39 @@ class FiverrClient:
             if resp.status_code != 200:
                 return result
 
-            soup = BeautifulSoup(resp.text, "html.parser")
+            if BeautifulSoup is not None:
+                soup = BeautifulSoup(resp.text, "html.parser")
 
-            # Extract budget
-            price_el = soup.select_one(
-                "[data-testid='price'], .price, .gig-price",
-            )
-            if price_el:
-                price_text = price_el.get_text(strip=True)
-                price_match = re.search(
-                    r'[\d,]+(?:\.\d{1,2})?', price_text,
+                # Extract budget
+                price_el = soup.select_one(
+                    "[data-testid='price'], .price, .gig-price",
                 )
-                if price_match:
-                    result["budget"] = float(
-                        price_match.group().replace(",", ""),
+                if price_el:
+                    price_text = price_el.get_text(strip=True)
+                    price_match = re.search(
+                        r'[\d,]+(?:\.\d{1,2})?', price_text,
                     )
+                    if price_match:
+                        result["budget"] = float(
+                            price_match.group().replace(",", ""),
+                        )
 
-            # Extract skills/tags
-            skill_els = soup.select(
-                "[data-testid='skill-tag'], .skill-tag, .tag",
-            )
-            result["skills"] = [
-                el.get_text(strip=True) for el in skill_els[:10]
-            ]
-
-            # Extract description
-            desc_el = soup.select_one(
-                "[data-testid='description'], .gig-description",
-            )
-            if desc_el:
-                result["description"] = (
-                    desc_el.get_text(strip=True)[:500]
+                # Extract skills/tags
+                skill_els = soup.select(
+                    "[data-testid='skill-tag'], .skill-tag, .tag",
                 )
+                result["skills"] = [
+                    el.get_text(strip=True) for el in skill_els[:10]
+                ]
+
+                # Extract description
+                desc_el = soup.select_one(
+                    "[data-testid='description'], .gig-description",
+                )
+                if desc_el:
+                    result["description"] = (
+                        desc_el.get_text(strip=True)[:500]
+                    )
 
         except Exception:
             pass

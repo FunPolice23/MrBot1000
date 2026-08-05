@@ -2,7 +2,12 @@
 agents/content_generator.py — Content generation for earning.
 """
 
-from typing import List
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, List
+
+if TYPE_CHECKING:
+    from .base_worker import WorkerAgent
 
 
 class ContentGenerator:

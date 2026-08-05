@@ -530,11 +530,22 @@ class EarningPipeline:
         for opp in opportunities:
             if opp.payment_type not in payment_types:
                 continue
-            if risk_order.get(opp.risk_level, 2) > max_risk_val:
+
+            risk_level = getattr(opp, "risk_level", "low") or "low"
+            if isinstance(risk_level, (list, tuple, set)):
+                risk_level = risk_level[0] if risk_level else "low"
+            if isinstance(risk_level, str):
+                risk_level = risk_level.lower()
+
+            if risk_order.get(risk_level, 2) > max_risk_val:
                 continue
-            if opp.skill_match < min_skill_match:
+
+            skill_match = getattr(opp, "skill_match", 0.0)
+            if skill_match > 0 and skill_match < min_skill_match:
                 continue
-            if opp.estimated_usd_value < min_usd_value:
+
+            estimated_value = getattr(opp, "estimated_usd_value", 0.0)
+            if estimated_value < min_usd_value:
                 continue
             
             # Apply memory-based boosts and penalties

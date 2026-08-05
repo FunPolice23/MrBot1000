@@ -12,7 +12,10 @@ from typing import List, Optional
 from dataclasses import dataclass, field
 
 import requests
-from bs4 import BeautifulSoup
+try:
+    from bs4 import BeautifulSoup
+except ImportError:  # pragma: no cover - optional dependency fallback
+    BeautifulSoup = None
 
 
 @dataclass

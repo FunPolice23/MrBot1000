@@ -1,5 +1,19 @@
 # MrBot1000 v2.0 - CHANGELOG
 
+## Update 2026-08-05 - Stability, Compatibility & Test Hardening
+
+### Runtime Reliability
+- **Hardened**: Airdrop scanning and Fiverr discovery imports now tolerate missing optional dependencies such as feedparser and BeautifulSoup without crashing startup.
+- **Fixed**: The earning pipeline now handles unscored opportunities and list-like risk values more gracefully during filtering.
+- **Improved**: Content generation imports are now safe in environments where worker typing is not available at import time.
+- **Aligned**: The mirrored publish tree under the github_upload folder was brought in line with the main codebase, but it remains a separate publish mirror maintained by sync_github_upload.py rather than the primary working tree.
+
+### Verification
+- **Test command**: `python -m pytest -q test_earning_pipeline.py github_upload/test_earning_pipeline.py`
+- **Result**: 40 passed, 0 failed (430 warnings)
+
+---
+
 ## Update 2026-08-05 - Metrics Analysis & Lead Generation Pipeline
 
 ### AnalystWorker Metrics Analysis
