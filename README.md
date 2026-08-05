@@ -17,6 +17,36 @@ Requires: Python 3.11+, Ollama (local LLM server), PySide6.
 - Executes safe, repeatable actions with full validation
 - Tracks earnings and payouts locally in SQLite
 
+## Running Tests
+
+```bash
+# Run all tests
+python -m tests --all
+
+# List available tests
+python -m tests --list
+
+# Run specific test
+python -m tests --test check_syntax
+
+# Run test category
+python -m tests --category health
+
+# Run multiple tests
+python -m tests --run check_syntax test_imports test_main
+```
+
+### Test Categories
+
+| Category | Tests | Purpose |
+|----------|-------|---------|
+| `syntax` | `check_syntax` | Validate Python syntax across all files |
+| `import` | `test_imports`, `test_analyst_worker`, `test_job_search`, `test_main` | Verify module imports work |
+| `health` | `test_analyst_metrics`, `test_job_evaluation`, `test_coordinator` | Check agent functionality |
+| `integration` | `run_full_suite`, `run_quick_check` | Run comprehensive test bundles |
+
+Test results are saved to `tests/test_results/test_run_YYYYMMDD_HHMMSS.json`.
+
 ## Architecture
 
 - **Main model** (gemma-4-E2B): Heavy analysis, code work, decisions
@@ -30,12 +60,13 @@ Requires: Python 3.11+, Ollama (local LLM server), PySide6.
 | File | Purpose |
 |------|---------|
 | `main.py` | Application entry point, UI setup |
-| `manager.py` | Agent orchestration, intent routing |
+| `manager.py` | Agent orchestration, intent routing, chat handling |
 | `action_pipeline.py` | Secure code execution with validation |
 | `earning_pipeline.py` | Income tracking pipeline |
 | `Agent.md` | Agent runtime contract & rules |
 | `ARCHITECTURE.md` | Full system architecture documentation |
 | `CHANGELOG.md` | Change history |
+| `tests/__main__.py` | Test suite runner |
 
 ## Configuration
 
@@ -61,6 +92,17 @@ Key settings:
 6. **Settings** — Model selection, configuration
 7. **Live Logs** — Debug output
 8. **DB Stats** — Database metrics
+
+## Agent Roster
+
+| Agent | Role | Model | Purpose |
+|-------|------|-------|---------|
+| Manager | Coordinator | Main | Orchestrates tasks, routes to workers |
+| Coordinator | Cross-model | Main | Bridges chat and main models via SharedContext |
+| Coder | Coding | Main | Code refactoring, bug fixes, implementation |
+| Summarizer | Chat | Chat | Handles conversational queries |
+| JobSearch | Job Discovery | Main | Finds gigs on Reddit, Fiverr, Upwork |
+| Analyst | Analysis | Main | Proposal metrics, job evaluation |
 
 ## Security
 

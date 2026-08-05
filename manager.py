@@ -242,6 +242,10 @@ class ManagerThread(QThread):
 
     # ── Logging helpers ───────────────────────────────────────────────────────
 
+
+    def set_summarizer(self, summarizer):
+        """Store reference to summarizer for chat result routing."""
+        self._summarizer = summarizer
     def _m_think(self, text: str):
         self.manager_thought.emit(text)
         self.thought.emit("Manager", text)
