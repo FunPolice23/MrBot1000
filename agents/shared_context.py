@@ -211,6 +211,36 @@ class SharedContext:
         signals = [s for s in state.cross_model_signals 
                    if s["to"] == model_name or s["to"] == "all"]
         return signals[-limit:]
+
+    def update_opportunity_lifecycle(self, opportunity_id: str, current_stage: str = "discovered",
+                                      status: str = "active", last_amount: float = 0.0,
+                                      note: str = "") -> Dict[str, Any]:
+        """Persist a lifecycle snapshot for an opportunity in shared context."""
+        state = self._read_state()
+        snapshot = {
+            "opportunity_id": opportunity_id,
+            "current_stage": current_stage,
+            "status": status,
+            "last_amount": last_amount,
+            "note": note,
+            "timestamp": time.time(),
+        }
+        state.recent_events.append({
+            "type": "opportunity_lifecycle",
+            "source": "shared_context",
+            "data": snapshot,
+            "timestamp": snapshot["timestamp"],
+        })
+        self._write_state(state)
+        return snapshot
+
+    def get_opportunity_lifecycle(self) -> List[Dict[str, Any]]:
+        """Return recent opportunity lifecycle snapshots."""
+        state = self._read_state()
+        return [
+            event["data"] for event in state.recent_events
+            if event.get("type") == "opportunity_lifecycle"
+        ][-20:]
     
     # ── High-Level Coordination ────────────────────────────────────────
     
@@ -263,10 +293,13 @@ class SharedContext:
 
 
 # Singleton instance for easy access
-_shared_context: SharedContext = None
+_shared_context: Optional[SharedContext] = None
 
-def get_shared_context() -> SharedContext:
+
+def get_shared_context(path: Optional[str] = None) -> SharedContext:
     global _shared_context
+    if path:
+        return SharedContext(path=path)
     if _shared_context is None:
         _shared_context = SharedContext()
     return _shared_context

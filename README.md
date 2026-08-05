@@ -1,6 +1,6 @@
 # MrBot1000 v2.0 — AI-Powered Earning Agent - W.I.P not a final product
 
-A real-time AI agent system for automated earning opportunity discovery and execution. Runs entirely locally — no cloud dependencies, no data sharing.
+A real-time AI agent system for automated earning opportunity discovery, execution, and lifecycle tracking. Runs entirely locally — no cloud dependencies, no data sharing.
 
 ## Quick Start
 
@@ -15,7 +15,16 @@ Requires: Python 3.11+, Ollama (local LLM server), PySide6.
 - Scans Reddit, Fiverr, Upwork, and other platforms for earning opportunities
 - Evaluates and ranks opportunities using a local Ollama model
 - Executes safe, repeatable actions with full validation
+- Tracks opportunities through discovery, application, submission, and payout stages
 - Tracks earnings and payouts locally in SQLite
+
+## Current Workflow
+
+1. Discover opportunities from supported sources
+2. Evaluate and filter them by value, risk, and fit
+3. Create a concrete next-action plan for the best options
+4. Execute approved steps safely and record the result
+5. Update the opportunity lifecycle so the assistant can answer progress questions from live state
 
 ## Running Tests
 
@@ -50,6 +59,7 @@ Test results are saved to `tests/test_results/test_run_YYYYMMDD_HHMMSS.json`.
 - **Chat model** (LFM2.5-1.2B or any model): CPU - Fast conversation (~2s responses)
 - **Multi-agent system**: Manager, Coordinator, Coder, Summarizer, JobSearch, Analyst
 - **Cross-model communication**: SharedContext JSON file
+- **Opportunity lifecycle tracking**: Shared-state progress updates for discovered, applied, submitted, paid, and failed opportunities
 - **Secure execution**: 5-stage action pipeline with validation
 
 ## UI Layout
@@ -124,7 +134,7 @@ Key settings:
 - **Agent.md** — Runtime contract for any model interacting with the system
 - **ARCHITECTURE.md** — Full system design and component reference
 - **Skill.md** — Template for creating new skill specifications
-- **skills/** — Individual skill definitions (social-discovery, evaluation, filtering, execution, document-qa)
+- **skills/** — Individual skill definitions including social-discovery, evaluation, filtering, execution, lifecycle tracking, and document QA
 
 ## Requirements
 

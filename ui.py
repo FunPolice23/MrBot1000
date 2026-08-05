@@ -998,6 +998,16 @@ class UnifiedChatWidget(QDialog):
         # Check both label and text (text contains [Heartbeat] for Manager messages)
         is_notification = any(x in label or f"[{x}]" in text for x in ["Heartbeat", "Worker", "Coordinator",
                           "Result", "JobSearch", "Analyst", "Coder", "Action", "Evaluator"])
+        if "lifecycle" in text.lower() or ("opportunity" in text.lower() and "status" in text.lower()):
+            self._display.appendHtml(
+                f'<span style="color:#888;">[{ts}]</span> '
+                f'<span style="color:#00b0ff;font-weight:bold;">📊 Opportunity Update:</span><br>'
+                f'<span style="color:#b3e5fc;">{safe}</span><br>'
+            )
+            self._append_notification(label, ts, safe)
+            sb = self._display.verticalScrollBar()
+            sb.setValue(sb.maximum())
+            return
         if is_notification:
             self._append_notification(label, ts, safe)
         elif "Manager" in label:
@@ -1409,6 +1419,16 @@ class SummarizerChatWindow(QDialog):
         # Check both label and text (text contains [Heartbeat] for Manager messages)
         is_notification = any(x in label or f"[{x}]" in text for x in ["Heartbeat", "Worker", "Coordinator",
                           "Result", "JobSearch", "Analyst", "Coder", "Action", "Evaluator"])
+        if "lifecycle" in text.lower() or ("opportunity" in text.lower() and "status" in text.lower()):
+            self._display.appendHtml(
+                f'<span style="color:#888;">[{ts}]</span> '
+                f'<span style="color:#00b0ff;font-weight:bold;">📊 Opportunity Update:</span><br>'
+                f'<span style="color:#b3e5fc;">{safe}</span><br>'
+            )
+            self._append_notification(label, ts, safe)
+            sb = self._display.verticalScrollBar()
+            sb.setValue(sb.maximum())
+            return
         if is_notification:
             self._append_notification(label, ts, safe)
         elif "Manager" in label:
@@ -1523,6 +1543,8 @@ class AgentsTab(QWidget):
             "background:#050510;color:#e0e0e0;font-size:12px;"
             "border:1px solid #333;"
         )
+        self._display.setPlaceholderText("Assistant output will appear here…")
+        self._display.setCenterOnScroll(True)
         chat_lay.addWidget(self._display, stretch=1)
 
         input_row = QHBoxLayout()
@@ -1566,6 +1588,8 @@ class AgentsTab(QWidget):
             "font-family:Consolas,Monaco,monospace;font-size:10px;"
             "background:#050510;color:#e0e0e0;border:1px solid #333;"
         )
+        self._notifications_list.setAlternatingRowColors(True)
+        self._notifications_list.setSelectionMode(QListWidget.NoSelection)
         notifications_lay.addWidget(self._notifications_list)
 
         # Use splitter to separate chat from notifications (resizable)
@@ -1766,6 +1790,16 @@ class AgentsTab(QWidget):
         # Check both label and text (text contains [Heartbeat] for Manager messages)
         is_notification = any(x in label or f"[{x}]" in text for x in ["Heartbeat", "Worker", "Coordinator",
                           "Result", "JobSearch", "Analyst", "Coder", "Action", "Evaluator"])
+        if "lifecycle" in text.lower() or ("opportunity" in text.lower() and "status" in text.lower()):
+            self._display.appendHtml(
+                f'<span style="color:#888;">[{ts}]</span> '
+                f'<span style="color:#00b0ff;font-weight:bold;">📊 Opportunity Update:</span><br>'
+                f'<span style="color:#b3e5fc;">{safe}</span><br>'
+            )
+            self._append_notification(label, ts, safe)
+            sb = self._display.verticalScrollBar()
+            sb.setValue(sb.maximum())
+            return
         if is_notification:
             self._append_notification(label, ts, safe)
         elif "Manager" in label:

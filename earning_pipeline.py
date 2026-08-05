@@ -25,6 +25,7 @@ from agents.defi_scanner import DeFiScanner
 from agents.microtask_client import MicrotaskClient, MicrotaskGig
 from agents.fiverr_client import FiverrClient, FiverrGig
 from agents.earning_discoverer import EarningDiscoverer, EarningOpportunity
+from agents.opportunity_lifecycle import OpportunityLifecycleTracker
 from earning_memory import EarningMemory
 
 ROOT_FOLDER = os.path.dirname(os.path.abspath(__file__))
@@ -81,6 +82,7 @@ class EarningPipeline:
         
         # Initialize memory system
         self.memory = EarningMemory(db_path=self.memory_path)
+        self.lifecycle = OpportunityLifecycleTracker()
 
     def _init_db(self):
         conn = sqlite3.connect(self.db_path)
@@ -757,6 +759,48 @@ class EarningPipeline:
     def get_platform_reputations(self) -> List[dict]:
         """Get reputation for all platforms."""
         return self.memory.get_all_reputations()
+
+    def track_opportunity(self, opportunity: Opportunity, stage: str, note: str = "", amount: float = 0.0):
+        """Update an opportunity's lifecycle state."""
+        try:
+            from agents.shared_context import get_shared_context
+        except Exception:
+            get_shared_context = None
+
+        state = self.lifecycle.start(opportunity)
+        if stage == "researched":
+            state = self.lifecycle.mark_researched(opportunity.id, note)
+        elif stage == "applied":
+            state = self.lifecycle.mark_applied(opportunity.id, note)
+        elif stage == "in_progress":
+            state = self.lifecycle.mark_in_progress(opportunity.id, note)
+        elif stage == "submitted":
+            state = self.lifecycle.mark_submitted(opportunity.id, note)
+        elif stage == "paid":
+            state = self.lifecycle.mark_paid(opportunity.id, amount=amount, note=note)
+        elif stage == "failed":
+            state = self.lifecycle.mark_failed(opportunity.id, note)
+
+        if get_shared_context is not None:
+            try:
+                get_shared_context().update_opportunity_lifecycle(
+                    opportunity.id,
+                    current_stage=state.current_stage,
+                    status=state.status,
+                    last_amount=state.last_amount,
+                    note=note,
+                )
+            except Exception:
+                pass
+
+        return state
+
+    def build_workflow_plan(self, opportunity: Opportunity):
+        """Create a concrete execution plan for an opportunity."""
+        from agents.workflow_planner import WorkflowPlanner
+
+        planner = WorkflowPlanner()
+        return planner.build_plan(opportunity)
 
     def get_recent_learned(self, learning_type: str = None, limit: int = 10) -> List[dict]:
         """Get recent learned insights."""

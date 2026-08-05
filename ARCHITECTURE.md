@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-MrBot1000 is a **real-time AI agent system** for automated earning opportunity discovery and execution. It uses a **multi-agent architecture** with specialized workers communicating via a **SharedContext JSON file**, enabling cross-model coordination between a fast chat model (LFM2.5-1.2B) and accurate main model (Gemma-4-E2B).
+MrBot1000 is a **real-time AI agent system** for automated earning opportunity discovery, execution, and lifecycle tracking. It uses a **multi-agent architecture** with specialized workers communicating via a **SharedContext JSON file**, enabling cross-model coordination between a fast chat model (LFM2.5-1.2B) and accurate main model (Gemma-4-E2B).
 
 **Key Achievements:**
 - ✅ Real-time earning pipeline (not simulation)
@@ -311,11 +311,13 @@ payouts: id, amount, wallet, method, status, ts
 
 ### Core Functions
 1. **Job Discovery**: Search Reddit, Fiverr, Upwork for earning opportunities
-2. **Code Assistance**: Python coding, debugging, suggestions
-3. **Conversation**: Natural language chat with context awareness
-4. **File Operations**: Safe read/write/delete with validation
-5. **Income Tracking**: Log earnings, track payouts
-6. **System Updates**: Self-improvement when enabled
+2. **Opportunity Planning**: Turn discovered leads into practical next-step plans
+3. **Lifecycle Tracking**: Move opportunities through discovered, applied, in progress, submitted, paid, or failed states
+4. **Code Assistance**: Python coding, debugging, suggestions
+5. **Conversation**: Natural language chat with context awareness
+6. **File Operations**: Safe read/write/delete with validation
+7. **Income Tracking**: Log earnings, track payouts
+8. **System Updates**: Self-improvement when enabled
 
 ### Integration Points
 - Ollama local server (required)
@@ -335,6 +337,7 @@ Each skill is documented in its own markdown file in `/skills/`:
 | `opportunity-evaluation.md` | Score/rank opportunities | Analyst |
 | `opportunity-filtering.md` | Filter by risk/reward | JobSearch |
 | `opportunity-execution.md` | Execute accepted tasks | Coder |
+| `opportunity-lifecycle.md` | Track and summarize opportunity progress | Summarizer/Manager |
 | `document-qa.md` | Answer questions about files | Summarizer |
 
 **Template**: `Skill.md` - Use this template to create new skill specifications

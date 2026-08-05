@@ -85,6 +85,7 @@ user requests opportunity discovery, or earnings pipeline enters discover phase,
 | `opportunity-evaluation.md` | Score/rank opportunities | Analyst |
 | `opportunity-filtering.md` | Filter by risk/reward | JobSearch |
 | `opportunity-execution.md` | Execute accepted tasks | Coder |
+| `opportunity-lifecycle.md` | Track and summarize opportunity progress | Summarizer/Manager |
 | `document-qa.md` | Answer questions about files | Summarizer |
 
 ---
@@ -96,6 +97,8 @@ user requests opportunity discovery, or earnings pipeline enters discover phase,
 3. **Numbered Steps**: Make execution flow obvious
 4. **Explicit Guardrails**: List what the skill MUST NOT do
 5. **Structured Output**: Define exactly what the skill returns
+6. **State-Aware Execution**: For lifecycle and status skills, include how the result should be persisted to shared context or memory
+7. **Evidence-Based Reporting**: Prefer observed state, tool output, and prior records over assumptions
 
 ---
 
@@ -104,7 +107,7 @@ user requests opportunity discovery, or earnings pipeline enters discover phase,
 | Version | Date | Changes |
 |---------|------|---------|
 | 1.0 | 2026-08-04 | Initial template |
-| 1.1 | TBD | Update with new skill types |
+| 1.1 | 2026-08-05 | Added lifecycle-aware skill guidance and updated skill types |
 
 ---
 

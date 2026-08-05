@@ -1,5 +1,74 @@
 # MrBot1000 v2.0 - CHANGELOG
 
+## Update 2026-08-05 - Compact Lifecycle Status Reports, Settings Update & UI Polish
+
+### Assistant Lifecycle Reporting
+- **Improved**: Assistant answers about opportunity progress now use a compact status report format instead of raw shared-state JSON.
+- **Added**: Lifecycle summaries now present stage, status, amount, note, and a short next-step recommendation in a concise readable block for faster human review.
+- **Enhanced**: The report now includes an at-a-glance overall line so executives and operators can quickly see whether opportunities are active, completed, or need follow-up.
+- **Refined**: The summary now adds a board-ready snapshot, a primary action line, and a clear priority label so the most important opportunity stands out immediately.
+- **Configured**: The new compact format is available as a user setting in the Settings tab and can be saved to the local environment file.
+
+### UI & Settings Improvements
+- **Refined**: The Agents tab chat and notification surfaces now present lifecycle updates more clearly and with cleaner panel styling.
+- **Enhanced**: The Settings tab now exposes an explicit preference for compact lifecycle status reports alongside the existing runtime and appearance controls.
+
+### Verification
+- **Added/updated**: Lifecycle regression coverage in `tests/test_opportunity_lifecycle.py`.
+- **Test command**: `d:\MrBot1000_2.0\.venv\Scripts\python.exe -m pytest tests/test_opportunity_lifecycle.py`
+- **Result**: 3 passed, 0 failed
+
+---
+
+## Update 2026-08-05 - Dual-Model Chat Routing, Opportunity Workflow Planning & Lifecycle Tracking
+
+### Opportunity Lifecycle Tracking
+- **Added**: A lifecycle tracker to move opportunities through discovered, researched, applied, in progress, submitted, paid, and failed stages.
+- **Integrated**: The earning pipeline now exposes a lifecycle update hook so opportunities can be advanced as work progresses.
+- **Connected**: Lifecycle snapshots are now stored in shared context and surfaced to the assistant chat/runtime context so questions about opportunity status can be answered from live state.
+- **Improved**: The UI chat surfaces now highlight opportunity-status updates in the assistant view and notifications panel.
+- **Verified**: New regression coverage confirms the tracker, shared-context integration, and pipeline updates behave as expected.
+
+### Verification
+- **Added**: Regression tests for lifecycle tracking and shared-context chat integration in `tests/test_opportunity_lifecycle.py`.
+- **Test command**: `d:\MrBot1000_2.0\.venv\Scripts\python.exe -m pytest tests/test_opportunity_lifecycle.py`
+- **Result**: 3 passed, 0 failed
+
+---
+
+## Update 2026-08-05 - Dual-Model Chat Routing & Opportunity Workflow Planning
+
+### Multi-Model Chat Routing
+- **Added**: A dedicated chat router to classify human prompts as conversational, analysis-oriented, or task-driven.
+- **Improved**: The chat experience now routes general questions to the fast chat path while reserving heavier analysis for the main-model workflow.
+- **Enhanced**: Chat replies can now pull from runtime context such as job-search reports, analytics artifacts, and other JSON-backed program state.
+
+### Opportunity Workflow Planning
+- **Added**: A workflow planner that turns discovered opportunities into actionable steps such as apply, deliver, and submit.
+- **Improved**: The earning pipeline can now create a concrete plan for opportunities instead of only identifying them.
+- **Expanded**: Fallback plans now handle unknown or manual platforms without breaking the workflow.
+
+### Verification
+- **Added**: Regression tests for chat routing and workflow planning in `tests/test_chat_router.py` and `tests/test_workflow_planner.py`.
+- **Test command**: `python -m pytest -q tests/test_chat_router.py tests/test_workflow_planner.py`
+- **Result**: 6 passed, 0 failed
+
+---
+
+## Update 2026-08-05 - Shutdown Hardening & Runtime Smoke Coverage
+
+### Runtime Lifecycle
+- **Improved**: Main window shutdown now stops the manager and summarizer threads more safely before closing the app.
+- **Added**: A dedicated shutdown routine that waits for worker threads to exit and terminates them if they remain alive.
+- **Hardened**: Database teardown is now invoked as part of the window shutdown path to avoid leaving resources open during close/restart cycles.
+
+### Verification
+- **Added**: Regression coverage for the shutdown flow in `tests/test_runtime_shutdown.py`.
+- **Test command**: `python -m pytest -q tests/test_runtime_shutdown.py`
+- **Result**: 1 passed, 0 failed
+
+---
+
 ## Update 2026-08-05 - Stability, Compatibility & Test Hardening
 
 ### Runtime Reliability

@@ -316,18 +316,50 @@ class MainWindow(QMainWindow):
 
         QTimer.singleShot(600, self.refresh_db_stats)
 
-    def closeEvent(self, event):
+    def shutdown(self):
+        if getattr(self, "_shutting_down", False):
+            return
+        self._shutting_down = True
+
         try:
             self._shutdown_ollama()
         except Exception:
             pass
-        self.manager.stop()
-        self.manager.wait(2000)
-        self.summarizer.stop()
-        self.summarizer.wait(2000)
-        if self.manager.isRunning():
-            self.manager.terminate()
-        self.db.close()
+
+        for component in (getattr(self, "manager", None), getattr(self, "summarizer", None)):
+            if component is None:
+                continue
+            try:
+                component.stop()
+            except Exception:
+                pass
+
+        for component in (getattr(self, "manager", None), getattr(self, "summarizer", None)):
+            if component is None:
+                continue
+            try:
+                component.wait(5000)
+            except Exception:
+                pass
+
+        for component in (getattr(self, "manager", None), getattr(self, "summarizer", None)):
+            if component is None:
+                continue
+            try:
+                if component.isRunning():
+                    component.terminate()
+            except Exception:
+                pass
+
+        db = getattr(self, "db", None)
+        if db is not None:
+            try:
+                db.close()
+            except Exception:
+                pass
+
+    def closeEvent(self, event):
+        self.shutdown()
         super().closeEvent(event)
 
     def _shutdown_ollama(self):
@@ -945,7 +977,7 @@ class MainWindow(QMainWindow):
         lay.addWidget(payg)
 
         # Appearance
-        apg = QGroupBox("Appearance")
+        apg = QGroupBox("Appearance & Assistant Preferences")
         apl = QFormLayout(apg)
         apl.setContentsMargins(12, 12, 12, 12)
         apl.setVerticalSpacing(8)
@@ -954,6 +986,15 @@ class MainWindow(QMainWindow):
         theme_combo.setCurrentText("Dark")
         theme_combo.currentTextChanged.connect(self.apply_theme)
         apl.addRow("Theme:", theme_combo)
+
+        self.status_format_check = QCheckBox("Use compact lifecycle status reports")
+        self.status_format_check.setChecked(os.getenv("COMPACT_STATUS_REPORTS", "true").lower() == "true")
+        apl.addRow(self.status_format_check)
+
+        status_format_note = QLabel("Show opportunity updates as concise status summaries instead of raw JSON payloads.")
+        status_format_note.setStyleSheet("color:#888;font-size:10px;")
+        status_format_note.setWordWrap(True)
+        apl.addRow(status_format_note)
         lay.addWidget(apg)
 
         # Cache Management
@@ -1551,6 +1592,8 @@ class MainWindow(QMainWindow):
         set_key(env, "PIPELINE_ALLOW_WRITE", str(self.pipeline_allow_write_check.isChecked()))
         set_key(env, "PIPELINE_ALLOW_SELF_IMPROVE",
                 str(self.pipeline_allow_selfimprove_check.isChecked()))
+        set_key(env, "COMPACT_STATUS_REPORTS",
+                str(getattr(self, "status_format_check", None).isChecked() if hasattr(self, "status_format_check") else True))
 
         # Reload env so newly saved keys are visible to os.getenv() in this process
         try:

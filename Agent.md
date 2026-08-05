@@ -1,7 +1,7 @@
 # Agent.md — MrBot1000 Runtime Contract
 
 ## Overview
-MrBot1000 is a real-time AI agent system for **automated earning opportunity discovery and execution**. This document defines the operating rules, architecture, and capabilities for any model used by the program.
+MrBot1000 is a real-time AI agent system for **automated earning opportunity discovery, execution, and lifecycle tracking**. This document defines the operating rules, architecture, and capabilities for any model used by the program, including the new lifecycle-aware workflow for tracking opportunities from discovery through payment.
 
 ---
 
@@ -24,20 +24,28 @@ The system operates with specialized agents sharing state through `SharedContext
 | Coordinator | Cross-model communication | Main | #a855f7 (fuchsia) |
 | Summarizer | Chat & conversation | Chat (LFM2.5-1.2B) | #00b0ff (cyan) |
 | Coder | Code analysis & modification | Main | #84cc16 (green) |
-| Analyist | Code review & suggestions | Main | #3b82f6 (blue) |
+| Analyst | Code review & suggestions | Main | #3b82f6 (blue) |
 | JobSearch | Find gigs on platforms | Main | #f97316 (orange) |
 
 ### Model Routing Strategy
 - **Chat/Questions** → Summarizer with `chat=True` (fast, ~2s)
 - **Tasks/Work** → Main model (accurate but slower)
+- **Lifecycle/Status Questions** → Summarizer with runtime context from shared state so replies can reflect recent opportunity progress
 - **Cross-talk** → SharedContext JSON (`~/.local/share/mrbot1000/shared_context.json`)
 
 ### Communication Flow
 ```
 User Input → ManagerThread → Intent Classification → Route:
   question → Summarizer → Chat Model → Response → agents_tab.display()
-  task   → Coder/Analyst → Main Model → Execute → Report
+  task     → Coder/Analyst → Main Model → Execute → Report
+  status   → Summarizer + SharedContext → Lifecycle summary → UI/Chat update
 ```
+
+### Current Operating Capabilities
+- **Opportunity lifecycle tracking** for discovered → researched → applied → in progress → submitted → paid/failed stages
+- **Workflow planning** that turns a discovered opportunity into a practical next-action plan
+- **Shared-context runtime awareness** so chat can answer status questions using live program state
+- **UI notifications** that highlight lifecycle changes and opportunity progress updates
 
 ---
 
@@ -93,7 +101,8 @@ OLLAMA_CHAT_MODEL=hf.co/LiquidAI/LFM2.5-1.2B-Instruct-GGUF:Q5_K_M
 2. **opportunity-evaluation.md** - Score opportunities
 3. **opportunity-filtering.md** - Filter by risk/reward
 4. **opportunity-execution.md** - Execute approved tasks
-5. **document-qa.md** - Answer questions about documents
+5. **opportunity-lifecycle.md** - Track and report opportunity status through the lifecycle
+6. **document-qa.md** - Answer questions about documents
 
 ### Safety-First Defaults (when no skill exists)
 | Action Type | Default Behavior |

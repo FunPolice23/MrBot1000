@@ -47,6 +47,7 @@ from library import (
     fingerprint,
     ts_now,
 )
+from agents.chat_router import ChatRouter
 
 ROOT_FOLDER  = os.path.dirname(os.path.abspath(__file__))
 SUMM_DB_PATH = os.path.join(ROOT_FOLDER, "summarizer.db")
@@ -284,6 +285,7 @@ class SummarizerThread(QThread):
         self._conversation   = ConversationMemory(max_chars=8000, max_turns=30)
         self._logger         = AgentLogger(db=db, source="Summarizer",
                                            signal=None)
+        self._chat_router    = ChatRouter()
 
         # ── Configuration ─────────────────────────────────────────────────
         self.interval      = 2.0      # poll interval (seconds)
@@ -562,10 +564,16 @@ class SummarizerThread(QThread):
 
         # Style instruction
         style_instruction = self._speech_bank.as_prompt_instruction()
+        decision = self._chat_router.classify(human_text)
+        runtime_context = self._chat_router.build_runtime_context(
+            getattr(self.worker, "research_folder", None),
+            user_message=human_text,
+        )
 
         system_prompt = (
             f"{self._CHAT_SYSTEM}\n\n"
             f"Frequent topics seen: {topics_str}.\n"
+            f"Routing decision: {decision.route_to} | use_main_model={decision.use_main_model}.\n"
             + (f"Adapt your reply style: {style_instruction}" if style_instruction else "")
         )
 
@@ -574,10 +582,10 @@ class SummarizerThread(QThread):
         user_prompt = (
             f"LATEST TASK RESULTS (HIGH PRIORITY):\n{latest_results_context}\n\n"
             f"RECENT AGENT SUMMARIES:\n{summ_context}\n\n"
+            f"RUNTIME CONTEXT:\n{runtime_context}\n\n"
             f"CONVERSATION SO FAR:\n{conversation_str}\n\n"
             f"Human: {human_text}\n\n"
-            "Instruction: If LATEST TASK RESULTS contains relevant evidence, "
-            "start your answer with 'Latest concrete result:' and summarize that first.\n"
+            f"Instruction: Route with {decision.route_to}. If the request is about program state, job search results, analytics, or code context, answer from the RUNTIME CONTEXT first. If LATEST TASK RESULTS contains relevant evidence, start your answer with 'Latest concrete result:' and summarize that first.\n"
             "Summarizer:"
         )
 
