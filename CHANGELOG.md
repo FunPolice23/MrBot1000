@@ -1,5 +1,35 @@
 # MrBot1000 v2.0 - CHANGELOG
 
+## Update 2026-08-05 - Safe Mode, CLI Shortcut & Startup Validation
+
+### Safe Mode & CLI
+- **Fixed**: The startup crash caused by using the safe-mode flag before the window initialized its state.
+- **Added**: A CLI shorthand flag, `-sm` or `--safe-mode`, to enable safe mode without needing an environment-variable assignment.
+- **Improved**: The action pipeline now honors safe mode consistently for proposed file writes and reports that execution was skipped instead of mutating files.
+- **Verified**: Safe-mode behavior is covered by regression tests and now works through the main app entry point.
+
+---
+
+## Update 2026-08-05 - Startup Validation & Runtime Warnings
+
+### Runtime Validation
+- **Added**: A startup validation layer that reports missing configuration, provider availability, and safe-mode status before workflow execution begins.
+- **Improved**: The application now emits explicit warnings when provider credentials or model settings are incomplete instead of silently continuing with limited functionality.
+- **Enhanced**: Manager-side runtime failures now surface as visible warnings so execution issues are easier to trace and recover from.
+- **Verified**: New regression coverage confirms the validation reports safe mode, missing-provider conditions, and runtime warnings correctly.
+
+---
+
+## Update 2026-08-05 - Explicit Opportunity State Machine
+
+### Lifecycle Auditing
+- **Added**: An explicit opportunity lifecycle state machine that validates each transition instead of allowing every move blindly.
+- **Improved**: Opportunity stages are now tracked with auditable metadata, including whether a transition was accepted or rejected and the reason for rejection.
+- **Enhanced**: The lifecycle tracker now preserves state even when an invalid transition is attempted, making recovery and debugging much clearer.
+- **Verified**: New regression tests cover both valid progressions and invalid transitions.
+
+---
+
 ## Update 2026-08-05 - Compact Lifecycle Status Reports, Settings Update & UI Polish
 
 ### Assistant Lifecycle Reporting

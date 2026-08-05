@@ -8,14 +8,26 @@ A real-time AI agent system for automated earning opportunity discovery, executi
 python main.py
 ```
 
-Requires: Python 3.11+, Ollama (local LLM server), PySide6.
+To exercise the workflow without making real changes, run either of these:
+
+```bash
+python main.py -sm
+# or
+python main.py --safe-mode
+```
+
+This is equivalent to enabling `MRBOT_SAFE_MODE=true` for the session.
+
+Requires: Python 3.11+, Ollama (local LLM server), and the packages listed in requirements.txt.
 
 ## What It Does
 
 - Scans Reddit, Fiverr, Upwork, and other platforms for earning opportunities
 - Evaluates and ranks opportunities using a local Ollama model
 - Executes safe, repeatable actions with full validation
-- Tracks opportunities through discovery, application, submission, and payout stages
+- Tracks opportunities through discovery, application, submission, and payout stages with explicit state transitions
+- Surfaces startup warnings and runtime issues so configuration gaps are visible early
+- Supports a safe mode that validates actions and skips real file changes while the workflow is being exercised
 - Tracks earnings and payouts locally in SQLite
 
 ## Current Workflow
@@ -59,7 +71,8 @@ Test results are saved to `tests/test_results/test_run_YYYYMMDD_HHMMSS.json`.
 - **Chat model** (LFM2.5-1.2B or any model): CPU - Fast conversation (~2s responses)
 - **Multi-agent system**: Manager, Coordinator, Coder, Summarizer, JobSearch, Analyst
 - **Cross-model communication**: SharedContext JSON file
-- **Opportunity lifecycle tracking**: Shared-state progress updates for discovered, applied, submitted, paid, and failed opportunities
+- **Opportunity lifecycle tracking**: Explicit, auditable stage transitions for discovered, researched, applied, in progress, submitted, paid, and failed opportunities
+- **Startup validation**: Checks configuration, provider availability, and safe-mode status before workflows begin
 - **Secure execution**: 5-stage action pipeline with validation
 
 ## UI Layout
@@ -138,6 +151,13 @@ Key settings:
 
 ## Requirements
 
+- Python packages from requirements.txt:
+  - PySide6 for the desktop UI
+  - ollama for local LLM integration
+  - python-dotenv for .env-based configuration
+  - requests for HTTP/network access
+  - anthropic and openai for optional cloud-provider integrations
+  - feedparser and beautifulsoup4 for feed and HTML-based discovery
 - GPU: 6GB VRAM minimum (GTX 1660 Super or better)
 - RAM: 32GB recommended
 - Storage: 5GB+ for models and databases

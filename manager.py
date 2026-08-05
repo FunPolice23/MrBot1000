@@ -251,41 +251,54 @@ class ManagerThread(QThread):
         self.thought.emit("Manager", text)
         if self.db:
             try: self.db.log_thought("Manager", text)
-            except Exception: pass
+            except Exception as exc:
+                self._emit_runtime_warning(f"thought logging failed: {exc}")
 
     def _a_think(self, text: str):
         self.agent_thought.emit(text)
         self.thought.emit("Agent", text)
         if self.db:
             try: self.db.log_thought("Agent", text)
-            except Exception: pass
+            except Exception as exc:
+                self._emit_runtime_warning(f"agent thought logging failed: {exc}")
 
     def _communicate(self, direction: str, text: str):
         self.comms.emit(direction, text)
         self.thought.emit("Comms", f"[{direction}] {text}")
         if self.db:
             try: self.db.log_thought("Comms", f"[{direction}] {text}")
-            except Exception: pass
+            except Exception as exc:
+                self._emit_runtime_warning(f"communication logging failed: {exc}")
 
     def _sys(self, text: str):
         self.thought.emit("System", text)
         if self.db:
             try: self.db.log_thought("System", text)
-            except Exception: pass
+            except Exception as exc:
+                self._emit_runtime_warning(f"system logging failed: {exc}")
 
     # ── Research helpers ──────────────────────────────────────────────────────
+
+    def _emit_runtime_warning(self, message: str):
+        if hasattr(self, "log") and self.log is not None:
+            self.log.emit(f"[RuntimeWarning] {message}")
 
     def _get_research(self, force: bool = False) -> dict:
         now = time.time()
         if (force or self._last_research is None
                 or (now - self._last_research_time) > self._research_cache_ttl):
             self._m_think("Scanning files for research context…")
-            self._last_research      = self.worker.research_all()
+            try:
+                self._last_research      = self.worker.research_all()
+            except Exception as exc:
+                self._emit_runtime_warning(f"research scan failed: {exc}")
+                self._last_research = {}
             self._last_research_time = now
             r = self._last_research
             if self.db:
                 try: self.db.save_research_cache(r)
-                except Exception: pass
+                except Exception as exc:
+                    self._emit_runtime_warning(f"research cache save failed: {exc}")
             self._m_think(
                 f"Scan complete — root: {len(r['root']):,} chars | "
                 f"research ({r['research_path'] or 'not set'}): "

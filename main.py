@@ -42,6 +42,7 @@ from agents.base_worker import WorkerAgent, ROOT_FOLDER
 from agents.summarizer import SummarizerThread
 from manager import ManagerThread
 from database import AgentDB
+from startup_validation import validate_startup_environment
 from ui import (
         AgentSprite, QuadThoughtPanel, AgentsTab
     )
@@ -57,6 +58,25 @@ from PySide6.QtGui import QColor, QPalette
 from PySide6.QtCore import QThread, Signal, QTimer, Qt
 from dotenv import load_dotenv, set_key
 load_dotenv(dotenv_path=Path(__file__).with_name(".env"), override=True)
+
+
+def _parse_cli_overrides(argv):
+    """Accept -sm/--safe-mode and MRBOT_SAFE_MODE=... style overrides."""
+    cleaned = [argv[0]]
+    safe_mode = False
+    for arg in argv[1:]:
+        if arg in {"-sm", "--safe-mode"}:
+            safe_mode = True
+        elif arg.startswith("MRBOT_SAFE_MODE="):
+            safe_mode = str(arg.split("=", 1)[1]).lower() in {"1", "true", "yes", "on"}
+            os.environ["MRBOT_SAFE_MODE"] = "true" if safe_mode else "false"
+        else:
+            cleaned.append(arg)
+    if safe_mode:
+        os.environ["MRBOT_SAFE_MODE"] = "true"
+    return cleaned, safe_mode
+
+
 try:
     import openai
     OPENAI_AVAILABLE = True
@@ -199,7 +219,6 @@ class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("MrBot1000 Agents v10 — Extended")
         self.resize(1450, 950)
         self.root_folder  = ROOT_FOLDER
         self._http_workers = []
@@ -207,12 +226,18 @@ class MainWindow(QMainWindow):
 
         self.db = AgentDB()
 
+        startup_report = validate_startup_environment(log_fn=self.log_signal.emit)
+        self.startup_report = startup_report
+        self._safe_mode = bool(startup_report.safe_mode or os.getenv("MRBOT_SAFE_MODE", "").lower() in {"1", "true", "yes", "on"})
+        self._refresh_window_title()
+
         # ── Action Pipeline ───────────────────────────────────────────────────
         from action_pipeline import ActionPipeline, AgentCollaboration
         self.pipeline = ActionPipeline(
             root_folder=ROOT_FOLDER,
             db=self.db,
-            log_fn=lambda msg: self.log_signal.emit(msg)
+            log_fn=lambda msg: self.log_signal.emit(msg),
+            safe_mode=self._safe_mode
         )
         self.pipeline.on_validated = self._on_pipeline_validated
         self.pipeline.on_executed  = self._on_pipeline_executed
@@ -222,6 +247,9 @@ class MainWindow(QMainWindow):
         ollama_main  = os.getenv("OLLAMA_MAIN_MODEL", "").strip() or None
         self.log_signal.emit(f"[Startup] OLLAMA_CHAT_MODEL from env: {ollama_chat}")
         self.log_signal.emit(f"[Startup] OLLAMA_MAIN_MODEL from env: {ollama_main}")
+        self.log_signal.emit(f"[Startup] validation status={startup_report.status} safe_mode={startup_report.safe_mode}")
+        if self._safe_mode:
+            self.log_signal.emit("[Startup] SAFE MODE active: real file-changing actions will be skipped")
         api_key      = os.getenv("OPENAI_API_KEY", "") or os.getenv("ANTHROPIC_API_KEY", "")
         self.worker  = WorkerAgent(api_key, self.log_signal, db=self.db,
                                    chat_ollama_model=ollama_chat,
@@ -1707,6 +1735,13 @@ class MainWindow(QMainWindow):
         app.setStyleSheet(qss)
         self.log_signal.emit(f"Theme: {theme_name}")
 
+    def _refresh_window_title(self):
+        base_title = "MrBot1000 Agents v10 — Extended"
+        if getattr(self, "_safe_mode", False):
+            self.setWindowTitle(f"{base_title} | SAFE-MODE")
+        else:
+            self.setWindowTitle(base_title)
+
     def _summarizer_human_send(self, text: str):
         self.summarizer.send_human_message(text)
 
@@ -1749,6 +1784,7 @@ class MainWindow(QMainWindow):
 if __name__ == "__main__":
     import traceback
     try:
+        sys.argv, _ = _parse_cli_overrides(sys.argv)
         app = QApplication(sys.argv)
         app.setStyle("Fusion")
         window = MainWindow()

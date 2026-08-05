@@ -78,6 +78,7 @@ class ExecutionResult:
     message:  str
     path:     str = ""
     duration: float = 0.0
+    skipped:  bool = False
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -351,11 +352,12 @@ class ActionPipeline:
     on_rejected(action, reason)     — called when validation fails
     """
 
-    def __init__(self, root_folder: str, db=None, log_fn: Callable = None):
+    def __init__(self, root_folder: str, db=None, log_fn: Callable = None, safe_mode: bool = False):
         self.root    = Path(root_folder).resolve()
         self.db      = db
         self._log    = log_fn or print
         self._lock   = threading.Lock()
+        self.safe_mode = safe_mode or os.getenv("MRBOT_SAFE_MODE", "").lower() in {"1", "true", "yes", "on"}
 
         # External callbacks
         self.on_validated: Optional[Callable] = None
@@ -411,9 +413,8 @@ class ActionPipeline:
 
         # Execute
         result = self._execute(action)
-        self._store_action(action,
-                           "executed" if result.success else "failed",
-                           result.message)
+        outcome = "skipped" if result.skipped else ("executed" if result.success else "failed")
+        self._store_action(action, outcome, result.message)
         if self.on_executed:
             self.on_executed(action, result)
 
@@ -446,6 +447,18 @@ class ActionPipeline:
 
     def _execute(self, action: ProposedAction) -> ExecutionResult:
         t0 = time.time()
+        if self.safe_mode:
+            self._log(
+                f"[Pipeline] SAFE MODE: skipped execution for {action.action_type} "
+                f"{action.target_path or action.description[:40]}"
+            )
+            return ExecutionResult(
+                True,
+                f"Safe mode enabled; skipped {action.action_type} without changing files",
+                path=action.target_path,
+                duration=time.time() - t0,
+                skipped=True,
+            )
         try:
             if action.action_type == "create_file":
                 return self._exec_create_file(action)
