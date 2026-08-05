@@ -1,4 +1,4 @@
-# MrBot1000 v2.0 — AI-Powered Earning Agent - W.I.P and not a final product
+# MrBot1000 v2.0 — AI-Powered Earning Agent - W.I.P not a final product
 
 A real-time AI agent system for automated earning opportunity discovery and execution. Runs entirely locally — no cloud dependencies, no data sharing.
 
@@ -30,10 +30,7 @@ python -m tests --list
 python -m tests --test check_syntax
 
 # Run test category
-python -m tests --category health
-
-# Run multiple tests
-python -m tests --run check_syntax test_imports test_main
+python -m tests --category import
 ```
 
 ### Test Categories
@@ -54,6 +51,16 @@ Test results are saved to `tests/test_results/test_run_YYYYMMDD_HHMMSS.json`.
 - **Multi-agent system**: Manager, Coordinator, Coder, Summarizer, JobSearch, Analyst
 - **Cross-model communication**: SharedContext JSON file
 - **Secure execution**: 5-stage action pipeline with validation
+
+## UI Layout
+
+The Agents tab contains:
+
+1. **Chat Window** (center) - Conversational interface with main model
+2. **Agent Roster** (right side) - Live agent status indicators
+3. **Notifications Panel** (collapsible) - Agent actions, heartbeat logs, system events
+
+> **Change in v2.0**: Notifications and agent actions are now separated from the chat window into a collapsible side panel. The chat window remains clean for conversational flow with the main AI model.
 
 ## Key Files
 

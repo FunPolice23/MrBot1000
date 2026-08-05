@@ -1,0 +1,25 @@
+{
+  "timestamp": "2026-08-05T08:24:51.749368",
+  "tests_run": [
+    "check_syntax",
+    "test_imports",
+    "test_analyst_worker",
+    "test_job_search",
+    "test_main",
+    "test_analyst_metrics",
+    "test_job_evaluation",
+    "test_coordinator"
+  ],
+  "passed": [
+    "check_syntax",
+    "test_imports",
+    "test_analyst_worker",
+    "test_job_search",
+    "test_main",
+    "test_analyst_metrics",
+    "test_job_evaluation",
+    "test_coordinator"
+  ],
+  "failed": [],
+  "errors": []
+}

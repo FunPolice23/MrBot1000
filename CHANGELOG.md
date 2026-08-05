@@ -1,6 +1,43 @@
 # MrBot1000 v2.0 - CHANGELOG
 
-## Update 2026-08-05 - AnalystWorker Implementation & Manager Bug Fixes
+## Update 2026-08-05 - Metrics Analysis & Lead Generation Pipeline
+
+### AnalystWorker Metrics Analysis
+- **Implemented**: `analyze_proposal()` - Proposal quality analysis with clarity (0-1), complexity (0-1), and structure assessment
+- **Implemented**: `evaluate_job_listing()` - Job fit evaluation against team skills, returns `recommended_action` (apply/research/pass)
+- **Implemented**: `generate_metrics_report()` - Aggregated metrics and common issues identification
+- **Output**: `analyst_metrics_report.json` - Proposal quality metrics report
+
+### JobSearchWorker Lead Generation
+- **Evaluated**: 3 freelance gig opportunities (Upwork, Fiverr, PeerTask)
+- **Results**: All 3 jobs queued for review (fit scores: 0.60-0.64)
+  - Build AI Chatbot with Memory ($500) → Queue ✅
+  - Qt PySide6 GUI Development ($300) → Queue ✅  
+  - Python Automation Script ($150) → Queue ✅
+- **Output**: `job_search_leads_report.json` - Job recommendations
+
+### Test Suite Execution
+- **All 8 tests passed** (check_syntax, test_imports, test_analyst_worker, test_job_search, test_main, test_analyst_metrics, test_job_evaluation, test_coordinator)
+- **Results**: `tests/test_results/test_run_20260805_085004.json`
+
+### Key Findings
+- **Bottleneck**: No LLM providers available (Ollama pydantic issue, no API keys configured)
+- **Proposal Issues**: Missing timeline/deadline specification, missing budget discussion
+- **Recommendation**: Include clear requirements, deliverables, and timeline in proposals
+
+## Update 2026-08-05 - Notifications Panel Implementation
+
+### UI: Collapsible Notifications Panel in Agents Tab
+
+- **Modified**: `ui.py` - Added collapsible side panel for agent notifications
+- **Added**: `_notifications_list` - QListWidget for displaying notifications
+- **Added**: `_notifications_toggle` button - Toggle to show/hide notifications panel
+- **Added**: `_toggle_notifications()` method - Handles panel collapse/expand
+- **Added**: `_append_notification()` method - Routes messages to sidebar
+- **Modified**: `append_reply()` - Now routes notifications vs chat messages
+- **UI Change**: Horizontal splitter separates chat (75%) from notifications (25%)
+- **Routing**: Heartbeat, Worker, Coordinator, Result messages → notifications panel
+- **Routing**: Manager, Answer, Summarizer messages → chat window
 
 ### AnalystWorker - New Implementation
 - **Added**: `agents/analyst_worker.py` - Fully implemented proposal analysis and metrics collection
@@ -21,18 +58,10 @@
 - **Change**: Added exclusive question detection to avoid misrouting queries like "Can you fix the bug?"
 - **Impact**: Conversational queries correctly go to CEO (chat), task keywords route to appropriate workers
 
-### Focus Areas Updated
-- **Updated**: `_FOCUS_AREAS` now reference active platforms (Reddit, Fiverr, Upwork) instead of discontinued ClawGig
-- **Impact**: Accurate system guidance for workers during heartbeat cycles
-
-### Worker Routing Updated
-- **Updated**: `_WORKER_ROUTING` keywords for JobSearch now include Reddit, Fiverr, Upwork, social platforms
-- **Impact**: Better task routing to correct workers
-
 ### Test Suite - New
-- **Added**: `tests/__main__.py` - Comprehensive test suite runner with 7 tests across 4 categories
+- **Added**: `tests/__main__.py` - Comprehensive test suite runner with 8 tests across 4 categories
 - **Added**: `tests/__init__.py` - Package initialization for test module
-- **Tests**: `check_syntax`, `test_imports`, `test_analyst_worker`, `test_job_search`, `test_analyst_metrics`, `test_job_evaluation`, `test_coordinator`
+- **Tests**: `check_syntax`, `test_imports`, `test_analyst_worker`, `test_job_search`, `test_main`, `test_analyst_metrics`, `test_job_evaluation`, `test_coordinator`
 - **Categories**: syntax, import, health, integration
 - **Usage**: `python -m tests --all` or `python -m tests --help`
 

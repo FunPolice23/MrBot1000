@@ -991,23 +991,25 @@ class UnifiedChatWidget(QDialog):
         self._sprite.set_state(state_map.get(status, "idle"))
 
     def append_reply(self, label: str, text: str):
+        """Append a message - notifications go to sidebar, chat stays clean."""
         ts = datetime.now().strftime("%H:%M:%S")
         safe = text.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
-        if "Heartbeat" in label:
-            self._display.appendHtml(
-                f'<span style="color:#555;">[{ts}] ⓘ System:</span><br>'
-                f'<span style="color:#888;font-size:11px;">{safe}</span><br>'
-            )
+        # Route notifications to sidebar, chat to main display
+        # Check both label and text (text contains [Heartbeat] for Manager messages)
+        is_notification = any(x in label or f"[{x}]" in text for x in ["Heartbeat", "Worker", "Coordinator",
+                          "Result", "JobSearch", "Analyst", "Coder", "Action", "Evaluator"])
+        if is_notification:
+            self._append_notification(label, ts, safe)
         elif "Manager" in label:
             self._display.appendHtml(
                 f'<span style="color:#888;">[{ts}]</span> '
-                f'<span style="color:#bb86fc;font-weight:bold;">Manager:</span><br>'
+                f'<span style="color:#bb86fc;font-weight:bold;">{label}:</span><br>'
                 f'<span style="color:#d4aaff;">{safe}</span><br>'
             )
-        elif "Summarizer" in label:
+        elif "Summarizer" in label or "Answer" in label:
             self._display.appendHtml(
                 f'<span style="color:#888;">[{ts}]</span> '
-                f'<span style="color:#00b0ff;font-weight:bold;">🤖 Summarizer:</span><br>'
+                f'<span style="color:#00b0ff;font-weight:bold;">🤖 Assistant:</span><br>'
                 f'<span style="color:#b3e5fc;">{safe}</span><br>'
             )
         else:
@@ -1018,6 +1020,13 @@ class UnifiedChatWidget(QDialog):
             )
         sb = self._display.verticalScrollBar()
         sb.setValue(sb.maximum())
+
+    def _append_notification(self, label: str, ts: str, text: str):
+        """Append agent notifications to the collapsible sidebar panel."""
+        if hasattr(self, '_notifications_list') and self._notifications_list.isVisible():
+            self._notifications_list.addItem(f"[{ts}] {label}: {text[:120]}")
+            sb = self._notifications_list.verticalScrollBar()
+            sb.setValue(sb.maximum())
 
     def append_system(self, text: str):
         ts = datetime.now().strftime("%H:%M:%S")
@@ -1393,23 +1402,25 @@ class SummarizerChatWindow(QDialog):
         sb.setValue(sb.maximum())
 
     def append_reply(self, label: str, text: str):
+        """Append a message - notifications go to sidebar, chat stays clean."""
         ts = datetime.now().strftime("%H:%M:%S")
         safe = text.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
-        if "Heartbeat" in label:
-            self._display.appendHtml(
-                f'<span style="color:#555;">[{ts}] ⓘ System:</span><br>'
-                f'<span style="color:#888;font-size:11px;">{safe}</span><br>'
-            )
+        # Route notifications to sidebar, chat to main display
+        # Check both label and text (text contains [Heartbeat] for Manager messages)
+        is_notification = any(x in label or f"[{x}]" in text for x in ["Heartbeat", "Worker", "Coordinator",
+                          "Result", "JobSearch", "Analyst", "Coder", "Action", "Evaluator"])
+        if is_notification:
+            self._append_notification(label, ts, safe)
         elif "Manager" in label:
             self._display.appendHtml(
                 f'<span style="color:#888;">[{ts}]</span> '
-                f'<span style="color:#bb86fc;font-weight:bold;">Manager:</span><br>'
+                f'<span style="color:#bb86fc;font-weight:bold;">{label}:</span><br>'
                 f'<span style="color:#d4aaff;">{safe}</span><br>'
             )
-        elif "Summarizer" in label:
+        elif "Summarizer" in label or "Answer" in label:
             self._display.appendHtml(
                 f'<span style="color:#888;">[{ts}]</span> '
-                f'<span style="color:#00b0ff;font-weight:bold;">🤖 Summarizer:</span><br>'
+                f'<span style="color:#00b0ff;font-weight:bold;">🤖 Assistant:</span><br>'
                 f'<span style="color:#b3e5fc;">{safe}</span><br>'
             )
         else:
@@ -1420,6 +1431,13 @@ class SummarizerChatWindow(QDialog):
             )
         sb = self._display.verticalScrollBar()
         sb.setValue(sb.maximum())
+
+    def _append_notification(self, label: str, ts: str, text: str):
+        """Append agent notifications to the collapsible sidebar panel."""
+        if hasattr(self, '_notifications_list') and self._notifications_list.isVisible():
+            self._notifications_list.addItem(f"[{ts}] {label}: {text[:120]}")
+            sb = self._notifications_list.verticalScrollBar()
+            sb.setValue(sb.maximum())
 
     def _on_strategy_change(self, strategy: str):
         if self._on_strategy_change:
@@ -1523,7 +1541,40 @@ class AgentsTab(QWidget):
         input_row.addWidget(send_btn)
         chat_lay.addLayout(input_row)
 
-        vlay.addWidget(chat_group, stretch=2)
+        # ── Side panel: Collapsible notifications ─────────────────────
+        self._notifications_toggle = QPushButton(" Notifications")
+        self._notifications_toggle.setCheckable(True)
+        self._notifications_toggle.setChecked(True)
+        self._notifications_toggle.setStyleSheet(
+            "QPushButton{border:1px solid #00b0ff44;border-radius:4px;"
+            "padding:4px;font-size:10px;background:#1a1a2e;color:#00b0ff;}"
+        )
+        self._notifications_toggle.clicked.connect(self._toggle_notifications)
+
+        notifications_group = QGroupBox("Agent Notifications")
+        notifications_group.setStyleSheet(
+            "QGroupBox{border:1px solid #00b0ff44;border-radius:4px;"
+            " margin-top:8px;padding-top:8px;color:#00b0ff;}"
+        )
+        notifications_lay = QVBoxLayout(notifications_group)
+        notifications_lay.setContentsMargins(4, 4, 4, 4)
+        notifications_lay.setSpacing(4)
+        notifications_lay.addWidget(self._notifications_toggle)
+
+        self._notifications_list = QListWidget()
+        self._notifications_list.setStyleSheet(
+            "font-family:Consolas,Monaco,monospace;font-size:10px;"
+            "background:#050510;color:#e0e0e0;border:1px solid #333;"
+        )
+        notifications_lay.addWidget(self._notifications_list)
+
+        # Use splitter to separate chat from notifications (resizable)
+        main_splitter = QSplitter(Qt.Horizontal)
+        main_splitter.addWidget(chat_group)
+        main_splitter.addWidget(notifications_group)
+        main_splitter.setStretchFactor(0, 3)  # Chat takes 3x space
+        main_splitter.setStretchFactor(1, 1)  # Notifications smaller
+        vlay.addWidget(main_splitter, stretch=2)
 
         # ── Bottom: live info + controls ─────────────────────────────
         bottom = QWidget()
@@ -1708,23 +1759,25 @@ class AgentsTab(QWidget):
         sb.setValue(sb.maximum())
 
     def append_reply(self, label: str, text: str):
+        """Append a message - notifications go to sidebar, chat stays clean."""
         ts = datetime.now().strftime("%H:%M:%S")
         safe = text.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
-        if "Heartbeat" in label:
-            self._display.appendHtml(
-                f'<span style="color:#555;">[{ts}] ⓘ System:</span><br>'
-                f'<span style="color:#888;font-size:11px;">{safe}</span><br>'
-            )
+        # Route notifications to sidebar, chat to main display
+        # Check both label and text (text contains [Heartbeat] for Manager messages)
+        is_notification = any(x in label or f"[{x}]" in text for x in ["Heartbeat", "Worker", "Coordinator",
+                          "Result", "JobSearch", "Analyst", "Coder", "Action", "Evaluator"])
+        if is_notification:
+            self._append_notification(label, ts, safe)
         elif "Manager" in label:
             self._display.appendHtml(
                 f'<span style="color:#888;">[{ts}]</span> '
-                f'<span style="color:#bb86fc;font-weight:bold;">Manager:</span><br>'
+                f'<span style="color:#bb86fc;font-weight:bold;">{label}:</span><br>'
                 f'<span style="color:#d4aaff;">{safe}</span><br>'
             )
-        elif "Summarizer" in label:
+        elif "Summarizer" in label or "Answer" in label:
             self._display.appendHtml(
                 f'<span style="color:#888;">[{ts}]</span> '
-                f'<span style="color:#00b0ff;font-weight:bold;">🤖 Summarizer:</span><br>'
+                f'<span style="color:#00b0ff;font-weight:bold;">🤖 Assistant:</span><br>'
                 f'<span style="color:#b3e5fc;">{safe}</span><br>'
             )
         else:
@@ -1736,7 +1789,21 @@ class AgentsTab(QWidget):
         sb = self._display.verticalScrollBar()
         sb.setValue(sb.maximum())
 
-    # ── Layout editor callbacks (kept for compat but no-op without office) ──
+    def _append_notification(self, label: str, ts: str, text: str):
+        """Append agent notifications to the collapsible sidebar panel."""
+        if hasattr(self, '_notifications_list') and self._notifications_list.isVisible():
+            self._notifications_list.addItem(f"[{ts}] {label}: {text[:120]}")
+            sb = self._notifications_list.verticalScrollBar()
+            sb.setValue(sb.maximum())
+
+    
+    def _toggle_notifications(self):
+        """Toggle the visibility of the notifications panel."""
+        is_visible = self._notifications_list.isVisible()
+        self._notifications_list.setVisible(not is_visible)
+        self._notifications_toggle.setText(" Notifications" if is_visible else "Hide Notifications")
+        self._notifications_toggle.setChecked(not is_visible)
+# ── Layout editor callbacks (kept for compat but no-op without office) ──
 
     def set_layout_edit_allowed(self, allowed: bool):
         pass

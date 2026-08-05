@@ -1,0 +1,13 @@
+{
+  "timestamp": "2026-08-05T08:48:03.227185",
+  "tests_run": [
+    "job_search_evaluation"
+  ],
+  "passed": [],
+  "failed": [
+    "job_search_evaluation"
+  ],
+  "errors": [
+    "job_search_evaluation: 'function' object has no attribute 'emit'"
+  ]
+}

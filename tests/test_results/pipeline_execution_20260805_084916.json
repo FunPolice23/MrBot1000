@@ -1,0 +1,16 @@
+{
+  "timestamp": "2026-08-05T08:49:12.597949",
+  "tests_run": [
+    "job_search_evaluation",
+    "read_analyst_report"
+  ],
+  "passed": [
+    "read_analyst_report"
+  ],
+  "failed": [
+    "job_search_evaluation"
+  ],
+  "errors": [
+    "job_search_evaluation: 'JobSearchWorker' object has no attribute 'evaluate_job_listing'"
+  ]
+}
