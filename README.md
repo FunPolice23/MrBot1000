@@ -1,4 +1,4 @@
-# MrBot1000 v2.0 — AI-Powered Earning Agent
+# MrBot1000 v2.0 — AI-Powered Earning Agent - W.I.P and not a final product
 
 A real-time AI agent system for automated earning opportunity discovery and execution. Runs entirely locally — no cloud dependencies, no data sharing.
 
@@ -49,8 +49,8 @@ Test results are saved to `tests/test_results/test_run_YYYYMMDD_HHMMSS.json`.
 
 ## Architecture
 
-- **Main model** (gemma-4-E2B): Heavy analysis, code work, decisions
-- **Chat model** (LFM2.5-1.2B): Fast conversation (~2s responses)
+- **Main model** (gemma-4-E2B or any model): GPU - Heavy analysis, code work, decisions
+- **Chat model** (LFM2.5-1.2B or any model): CPU - Fast conversation (~2s responses)
 - **Multi-agent system**: Manager, Coordinator, Coder, Summarizer, JobSearch, Analyst
 - **Cross-model communication**: SharedContext JSON file
 - **Secure execution**: 5-stage action pipeline with validation
