@@ -1,5 +1,27 @@
 # MrBot1000 v2.0 - CHANGELOG
 
+## Update 2026-08-05 - Theme Customization, Shared Research Context & Safe Mode
+
+### Theme System & Visual Customization
+- **Added**: Multiple built-in UI themes including Dark, Light, Midnight-Blue, Ocean, Solar, Forest, Rose, Lavender, Neon-Cyberpunk, and Gradient-Mix.
+- **Added**: A new custom theme workflow so users can choose colors for the main application background, panel surfaces, text, accent/outline color, highlight color, and disabled text.
+- **Improved**: The Theme menu now exposes both preset themes and a dedicated “Customize Theme…” action for quick personalization.
+- **Enhanced**: Theme colors now flow through the main window palette and stylesheet so the app feels more polished and easier to tailor for different working environments.
+
+### Shared Research Knowledge Base
+- **Added**: Research snapshots are now persisted into the shared context layer so both the main-model workflow and the chat-model workflow can reuse the same research knowledge.
+- **Improved**: The chat router now includes the latest shared research snapshot in its runtime context, making conversational responses more grounded and consistent with the manager’s research scans.
+- **Enhanced**: The Management tab now exposes a visible research snapshot so the selected folder’s value is easier to inspect at a glance.
+- **Verified**: New regression coverage confirms that shared research context is available to the chat-side runtime flow.
+
+### Safe Mode & CLI
+- **Fixed**: The startup crash caused by using the safe-mode flag before the window initialized its state.
+- **Added**: A CLI shorthand flag, `-sm` or `--safe-mode`, to enable safe mode without needing an environment-variable assignment.
+- **Improved**: The action pipeline now honors safe mode consistently for proposed file writes and reports that execution was skipped instead of mutating files.
+- **Verified**: Safe-mode behavior is covered by regression tests and now works through the main app entry point.
+
+---
+
 ## Update 2026-08-05 - Shared Research Context, Safe Mode & Startup Validation
 
 ### Shared Research Knowledge Base
