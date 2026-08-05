@@ -22,7 +22,7 @@ from PySide6.QtCore import QThread, Signal
 #  Focus areas rotate through per heartbeat
 # ─────────────────────────────────────────────────────────────────────────────
 _FOCUS_AREAS = [
-    "job search — find high-value gigs on Reddit, Fiverr, Upwork, social platforms",
+    "job search — find high-value gigs on ClawGig/uGig/Moltbook",
     "proposal quality — improve win rate on open gigs",
     "code quality — refactor and harden agent code",
     "worker coordination — review task queue and reassign stale tasks",
@@ -43,8 +43,8 @@ _INTENT_KEYWORDS = {
 
 # Worker specialty routing keywords
 _WORKER_ROUTING = {
-    "JobSearch":  ["job", "gig", "find work", "search", "reddit", "fiverr",
-                   "upwork", "social", "earn", "apply", "listing", "opportunity"],
+    "JobSearch":  ["job", "gig", "find work", "search", "clawgig", "ugig",
+                   "moltbook", "freelance", "earn", "apply", "listing"],
     "Analyst":    ["analyse", "analyze", "metric", "report", "complexity",
                    "duplicate", "quality", "debt", "chart", "stats"],
     "Summarizer": ["summary", "explain", "simplify", "translate", "describe",
@@ -55,32 +55,9 @@ _WORKER_ROUTING = {
 
 
 def _classify_intent(text: str) -> str:
-    """Classify intent as task, question, or command."""
     lower = text.lower()
     scores = {intent: sum(1 for kw in kws if kw in lower)
               for intent, kws in _INTENT_KEYWORDS.items()}
-    
-    question_score = scores.get("question", 0)
-    task_score = scores.get("task", 0)
-    
-    # Task keywords take precedence over question keywords
-    # This avoids polite phrasing like "can you fix..." being misrouted as questions
-    if task_score > 0:
-        return "task"
-    
-    # Only classify as question if there are clear conversational indicators
-    # and no task keywords
-    if question_score > 0:
-        has_conv_cue = any(cue in lower for cue in ["can you", "could you", "tell me", 
-                           "must i", "able to", "contact me", "reach me",
-                           "explain", "what is", "how does", "show me"])
-        # Exclusive question keywords (not mixed with task)
-        exclusive_question = all(kw not in lower for kw in ["fix", "improve", "refactor", "add",
-                                                              "implement", "update", "create",
-                                                              "write", "scan", "review", "audit"])
-        if has_conv_cue and exclusive_question:
-            return "question"
-    
     best = max(scores, key=scores.get)
     return best if scores[best] > 0 else "question"
 
@@ -104,7 +81,7 @@ class ManagerThread(QThread):
 
     # ── UI signals ────────────────────────────────────────────────────────────
     log          = Signal(str)
-    chat_reply   = Signal(str, str)      # (label, text)
+    chat_reply   = Signal(str, str)      # (label, full_text)
     agent_status = Signal(str, str)      # (status, task)
 
     # ── New roster/job signals ────────────────────────────────────────────────
@@ -119,19 +96,19 @@ class ManagerThread(QThread):
     # ══════════════════════════════════════════════════════════════════════════
 
     CEO_SYSTEM = (
-            "You are the CEO of MrBot1000, an autonomous AI freelance agency. "
-            "You manage a team of specialized AI workers:\n"
-            "  • Coder        — Python coding, refactoring, bug fixing\n"
-            "  • Analyst      — code quality metrics, complexity, reports\n"
-            "  • JobSearch    — finds gigs on Reddit, Fiverr, Upwork, social platforms\n"
-            "  • Summarizer   — explains agent activity in plain language\n"
-            "Core goals: 1) Win profitable gigs  2) Improve team code  "
-            "3) Maximize USDC earnings  4) Self-upgrade workers.\n"
-            "Given the context, decide the single most impactful next action.\n"
-            "Respond in EXACTLY one of these formats:\n"
-            "  ACTION[Coder]: <specific coding task>\n"
-            "  ACTION[Analyst]: <analysis task>\n"
-            "  ACTION[JobSearch]: <search/apply task>\n"
+        "You are the CEO of MrBot1000, an autonomous AI freelance agency. "
+        "You manage a team of specialized AI workers:\n"
+        "  • Coder        — Python coding, refactoring, bug fixing\n"
+        "  • Analyst      — code quality metrics, complexity, reports\n"
+        "  • JobSearch    — finds gigs on ClawGig, uGig, Moltbook\n"
+        "  • Summarizer   — explains agent activity in plain language\n"
+        "Core goals: 1) Win profitable gigs  2) Improve team code  "
+        "3) Maximize USDC earnings  4) Self-upgrade workers.\n"
+        "Given the context, decide the single most impactful next action.\n"
+        "Respond in EXACTLY one of these formats:\n"
+        "  ACTION[Coder]: <specific coding task>\n"
+        "  ACTION[Analyst]: <analysis task>\n"
+        "  ACTION[JobSearch]: <search/apply task>\n"
         "  ACTION[Manager]: <direct management task>\n"
         "  NO_ACTION: <brief reason>\n"
         "  ESCALATE: <reason needing human input>\n"
@@ -189,7 +166,6 @@ class ManagerThread(QThread):
         self._last_research_time = 0.0
 
         self._chat_history: List[dict] = []
-        self._summarizer = None  # Will be set via set_summarizer()
 
         # ── Worker roster ──────────────────────────────────────────────────────
         # name → {"worker": WorkerAgent, "busy": bool, "current_task": str}
@@ -263,29 +239,6 @@ class ManagerThread(QThread):
 
     def set_paused(self, paused: bool):
         self.paused = paused
-
-    def set_summarizer(self, summarizer):
-        """Store reference to summarizer for chat result routing."""
-        self._summarizer = summarizer
-
-    def _emit_task_result(self, worker_name: str, result: str, task: str):
-            """Emit task result for summarizer to format and display."""
-            # Extract the actual result (after RESULT: if present)
-            if "RESULT:" in result:
-                actual_result = result.split("RESULT:")[-1].strip()
-            elif result.strip().upper().startswith("RESULT:"):
-                actual_result = result.split("RESULT:")[1].strip()
-            else:
-                actual_result = result.strip()
-        
-            # Limit to 1500 chars for reasonable display
-            if len(actual_result) > 1500:
-                actual_result = actual_result[:1500] + "..."
-        
-            summary_text = f"{actual_result}"
-            self._summarizer.add_manager_thought(f"[{worker_name}] Result: {summary_text}")
-            # Emit via chat_reply - the label will be the worker name
-            self.chat_reply.emit(worker_name, summary_text)
 
     # ── Logging helpers ───────────────────────────────────────────────────────
 
@@ -514,17 +467,11 @@ class ManagerThread(QThread):
                         if "RESULT:" in result else result[:200])
         self._communicate("A→M", f"[{worker_name}] {result_short}")
         self._set_worker_free(worker_name)
-        
-        # Emit task result for chat display
-        self._emit_task_result(worker_name, result, action)
-        
         return result
 
-    def _full_cycle(self, trigger_label: str, manager_prompt: str, context: str,
-                    emit_chat: bool = True):
+    def _full_cycle(self, trigger_label: str, manager_prompt: str, context: str):
         decision = self._ceo_decide(trigger_label, manager_prompt)
-        if emit_chat:
-            self.chat_reply.emit(trigger_label, decision)
+        self.chat_reply.emit(trigger_label, decision)
 
         if decision.startswith("ERROR:"):
             self.log.emit(f"CEO LLM error: {decision}")
@@ -582,9 +529,7 @@ class ManagerThread(QThread):
                 f"Plan which team member handles this and what they should do.\n\n"
                 f"{context}"
             )
-            # Don't emit the decision to chat for human tasks - only show the final result
-            self._full_cycle(f"Chat-task: {human_text[:40]}", prompt, context,
-                             emit_chat=False)
+            self._full_cycle(f"Chat-task: {human_text[:40]}", prompt, context)
 
         elif intent == "command":
             lower = human_text.lower()
@@ -630,6 +575,14 @@ class ManagerThread(QThread):
             )
             self._m_think(f"CEO answering: {human_text[:80]}")
             answer = self._llm_call(self.CHAT_SYSTEM, chat_prompt, "chat")
+            
+            # Handle error or empty responses
+            if not answer or not answer.strip():
+                answer = "I'm having trouble reaching the language model right now. " \
+                        "Please check your Ollama connection and try again."
+            elif answer.startswith("ERROR:"):
+                answer = "I'm still thinking about that. Could you rephrase or ask another question?"
+            
             self._chat_history.append({"role": "assistant", "content": answer})
             self.chat_reply.emit("Answer", answer)
             self._m_think(f"CEO answer:\n{answer}")
@@ -724,7 +677,7 @@ class ManagerThread(QThread):
                     "Assign it to the right team member.\n\n"
                     f"{context}"
                 )
-                self._full_cycle("Heartbeat", prompt, context, emit_chat=False)
+                self._full_cycle("Heartbeat", prompt, context)
                 self.agent_status.emit("Idle", "Ready")
                 last_heartbeat = now
                 time.sleep(2)
