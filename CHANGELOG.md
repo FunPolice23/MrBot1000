@@ -1,5 +1,41 @@
 # MrBot1000 v2.0 - CHANGELOG
 
+## [2.0.20a] - 2026-08-06 - Model Env-Var Precedence Fix (patch)
+
+### Bugs fixed
+1. **Shutdown unloaded the wrong main model.** `_shutdown_ollama` read
+   `OLLAMA_MAIN_MODEL` from `.env`, but `WorkerAgent.llm()` actually ran the
+   main model via `OLLAMA_MODEL` (and the live instance override). So after
+   switching the main model in Settings, exit unloaded the *old* `.env` model
+   and left the *new* one resident in VRAM — defeating the 2.0.14 unload fix.
+   Now shutdown unloads the **active** model
+   (`worker._ollama_model_override` → `OLLAMA_MAIN_MODEL` → `OLLAMA_MODEL`),
+   matching what `llm()` actually uses.
+2. **Inconsistent main-model env var.** `llm()` and `save_settings` used
+   `OLLAMA_MODEL` while startup/shutdown referenced `OLLAMA_MAIN_MODEL`.
+   Standardized on `OLLAMA_MAIN_MODEL` as canonical:
+   - `llm()` resolves main model as
+     `_ollama_model_override` → `OLLAMA_MAIN_MODEL` → `OLLAMA_MODEL` (legacy
+     fallback).
+   - `save_settings` now writes `OLLAMA_MAIN_MODEL` (and still mirrors
+     `OLLAMA_MODEL` for backward compatibility).
+   - Startup seeds the worker's `primary_ollama_model` from `OLLAMA_MAIN_MODEL`
+     (falling back to `OLLAMA_MODEL`), and logs both `OLLAMA_MAIN_MODEL` and
+     `OLLAMA_CHAT_MODEL` at startup for clarity.
+
+### Behaviour now (consistent)
+`.env` seeds the Settings dropdowns at startup (the default/fallback). The
+Settings dropdown is the live source of truth: on Save it writes
+`OLLAMA_MAIN_MODEL`/`OLLAMA_CHAT_MODEL` back to `.env` *and* live-overrides the
+running worker, so `.env` and runtime stay in sync. Within a session the UI
+wins; across restarts `.env` (holding the last save) wins. Shutdown releases the
+model actually in VRAM.
+
+### Verification
+Ad-hoc: `llm()` picks `_ollama_model_override` first, then `OLLAMA_MAIN_MODEL`;
+startup logs both main+chat models; `save_settings` writes `OLLAMA_MAIN_MODEL`;
+shutdown-path resolves the active model (no reliance on stale `.env` at exit).
+
 ## [2.0.20] - 2026-08-06 - Task Workspaces: work/<platform>/<job_id> + Requirement Fulfilment
 
 ### Per-task deliverable workspace

@@ -184,7 +184,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("MrBot1000 v2.0.20")
+        self.setWindowTitle("MrBot1000 v2.0.20a")
         self.resize(1450, 950)
         self.root_folder  = ROOT_FOLDER
         self._http_workers = []
@@ -204,10 +204,13 @@ class MainWindow(QMainWindow):
         self.pipeline.on_rejected  = self._on_pipeline_rejected
 
         ollama_chat  = os.getenv("OLLAMA_CHAT_MODEL", "").strip() or None
+        ollama_main  = os.getenv("OLLAMA_MAIN_MODEL", "").strip() or os.getenv("OLLAMA_MODEL", "").strip() or None
         self.log_signal.emit(f"[Startup] OLLAMA_CHAT_MODEL from env: {ollama_chat}")
+        self.log_signal.emit(f"[Startup] OLLAMA_MAIN_MODEL from env: {ollama_main}")
         api_key      = os.getenv("OPENAI_API_KEY", "") or os.getenv("ANTHROPIC_API_KEY", "")
         self.worker  = WorkerAgent(api_key, self.log_signal, db=self.db,
-                                   chat_ollama_model=ollama_chat)
+                                   chat_ollama_model=ollama_chat,
+                                   primary_ollama_model=ollama_main)
         self.manager = ManagerThread(api_key, self.worker, db=self.db)
         self.summarizer = SummarizerThread(self.worker, db=self.db)
         self.manager.set_summarizer(self.summarizer)  # Connect summarizer to manager
@@ -323,12 +326,16 @@ class MainWindow(QMainWindow):
         if not OLLAMA_AVAILABLE or not ollama:
             return
         try:
-            # Unload the two canonical configured models. Previously this only
-            # read OLLAMA_MODEL (now removed), so OLLAMA_MAIN_MODEL was never
-            # unloaded and stayed resident after exit.
-            main_model = os.getenv("OLLAMA_MAIN_MODEL", "").strip()
-            chat_model = os.getenv("OLLAMA_CHAT_MODEL", "").strip()
-            for model in {main_model, chat_model}:
+            # Unload the two active models (not just whatever is in .env).
+            # Prefer the live instance overrides (set by save_settings / live
+            # switch), falling back to the canonical env vars. This guarantees
+            # the model actually resident in VRAM is released on exit.
+            active_main = (getattr(self.worker, "_ollama_model_override", None)
+                           or os.getenv("OLLAMA_MAIN_MODEL", "").strip()
+                           or os.getenv("OLLAMA_MODEL", "").strip())
+            active_chat = (getattr(self.worker, "_chat_ollama_model_override", None)
+                           or os.getenv("OLLAMA_CHAT_MODEL", "").strip())
+            for model in {active_main, active_chat}:
                 if not model:
                     continue
                 try:
@@ -492,7 +499,7 @@ class MainWindow(QMainWindow):
         container_layout.setContentsMargins(0, 0, 0, 0)
         container_layout.setSpacing(0)
 
-        title_lbl = QLabel("MrBot1000 v2.0.20")
+        title_lbl = QLabel("MrBot1000 v2.0.20a")
         title_lbl.setAlignment(Qt.AlignHCenter | Qt.AlignVCenter)
         title_lbl.setStyleSheet(
             "font-size:15px; font-weight:bold; padding:8px 0px; "
@@ -514,7 +521,7 @@ class MainWindow(QMainWindow):
         tabs.addTab(self.create_db_stats_tab(),    "DB Stats")
 
         # Auto-populate the Ollama model dropdowns the first time the Settings
-        # tab is opened, so you don't have to click Refresh manually (v2.0.20).
+        # tab is opened, so you don't have to click Refresh manually (v2.0.20a).
         self._ollama_autorefresh_done = False
         self._settings_tab_index = tabs.indexOf(self.create_settings_tab())
         tabs.currentChanged.connect(self._on_tab_changed)
@@ -1485,7 +1492,7 @@ class MainWindow(QMainWindow):
 
     def _on_tab_changed(self, index: int):
         # Auto-populate the Ollama model dropdowns the first time the Settings
-        # tab is shown (v2.0.20). Avoids requiring a manual Refresh click and
+        # tab is shown (v2.0.20a). Avoids requiring a manual Refresh click and
         # avoids re-querying Ollama on every tab switch.
         if self._ollama_autorefresh_done:
             return
@@ -1551,6 +1558,7 @@ class MainWindow(QMainWindow):
         set_key(env, "OPENAI_MODEL",        self.openai_model_edit.text())
         set_key(env, "ANTHROPIC_API_KEY",   self.anthropic_key_edit.text())
         set_key(env, "ANTHROPIC_MODEL",     self.anthropic_model_edit.text())
+        set_key(env, "OLLAMA_MAIN_MODEL",   self.ollama_model_combo.currentText())
         set_key(env, "OLLAMA_MODEL",        self.ollama_model_combo.currentText())
         set_key(env, "OLLAMA_CHAT_MODEL",   self.ollama_chat_model_combo.currentText().strip())
         set_key(env, "DISABLE_OPENAI",      str(self.disable_openai.isChecked()))

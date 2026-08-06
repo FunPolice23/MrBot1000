@@ -167,12 +167,16 @@ class WorkerAgent:
 
         # Ollama: use when not disabled and available
         if os.getenv("DISABLE_OLLAMA", "false").lower() != "true" and OLLAMA_AVAILABLE:
-            env_model = os.getenv("OLLAMA_MODEL", "llama3.2")
+            # Main model: prefer the live instance override (set by the UI /
+            # save_settings), then OLLAMA_MAIN_MODEL, then OLLAMA_MODEL as a
+            # legacy fallback. NOTE: OLLAMA_MAIN_MODEL is the canonical var
+            # (see .env + save_settings); OLLAMA_MODEL is only a fallback.
+            env_model = (self._ollama_model_override
+                         or os.getenv("OLLAMA_MAIN_MODEL", "").strip()
+                         or os.getenv("OLLAMA_MODEL", "llama3.2"))
             chat_model = self._chat_model_effective() if chat else None
             if chat_model:
                 model = chat_model
-            elif self._ollama_model_override:
-                model = self._ollama_model_override
             else:
                 model = env_model
             providers.append(("ollama", self._call_ollama, model, model))
