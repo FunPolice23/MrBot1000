@@ -258,8 +258,8 @@ class ManagerThread(QThread):
         if name in self._roster:
             self._roster[name]["busy"] = True
             self._roster[name]["current_task"] = task
-            self.worker_assigned.emit(name, task[:60])
-            self.agent_status.emit(f"{name}: Working", task[:50])
+            self.worker_assigned.emit(name, task)
+            self.agent_status.emit(f"{name}: Working", task)
 
     def _set_worker_free(self, name: str):
         if name in self._roster:

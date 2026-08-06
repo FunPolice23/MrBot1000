@@ -184,7 +184,7 @@ MrBot1000/
 ├── .gitignore                # Git ignore template
 └── agents/                   # Agent implementations
     ├── base_worker.py        # Base worker with path validation and safe_write_file()
-    ├── coder.py              # NEW (v4.0.3): Code agent with actual file execution
+    ├── coder.py              # NEW (v2.0.3): Code agent with actual file execution
     ├── summarizer.py         # Chat agent (handles SummarizerThread)
     ├── job_search_worker.py  # Job discovery (REAL client: FiverrClient, UpworkClient)
     ├── analyst_worker.py     # Proposal analysis (IMPLEMENTED)

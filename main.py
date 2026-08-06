@@ -33,6 +33,18 @@ import os
 import json
 import urllib.request
 sys.path.insert(0, os.path.dirname(__file__))
+
+# ── CLI flags ──────────────────────────────────────────────────────────────
+# -sm / --safe-mode is a convenience alias for MRBOT_SAFE_MODE=true.
+# It exercises the workflow without making real file changes.
+import argparse
+_parser = argparse.ArgumentParser(description="MrBot1000 desktop application", add_help=True)
+_parser.add_argument("-sm", "--safe-mode", action="store_true",
+                     help="Run in safe mode (alias for MRBOT_SAFE_MODE=true)")
+_args, _unknown = _parser.parse_known_args()
+if _args.safe_mode:
+    os.environ["MRBOT_SAFE_MODE"] = "true"
+
 import time
 import requests
 from datetime import datetime
@@ -199,7 +211,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("MrBot1000 Agents v10 — Extended")
+        self.setWindowTitle("MrBot1000 v2.0.8")
         self.resize(1450, 950)
         self.root_folder  = ROOT_FOLDER
         self._http_workers = []
@@ -386,7 +398,7 @@ class MainWindow(QMainWindow):
             if trigger.startswith("Heartbeat:") or trigger.startswith("Task:"):
                 # Heartbeat/task decisions - update status, don't clutter chat
                 if hasattr(self, 'agent_status_label'):
-                    self.agent_status_label.setText(f"Action: {trigger[:40]}...")
+                    self.agent_status_label.setText(f"Action: {trigger}")
                 return
         
             if hasattr(self, "agents_tab") and hasattr(self.agents_tab, "append_reply"):
@@ -494,8 +506,23 @@ class MainWindow(QMainWindow):
             self.show_thoughts_action.setText("Hide Thought Panel")
 
     def create_ui(self):
+        # Centered title header at the top of the program
+        container = QWidget()
+        container_layout = QVBoxLayout(container)
+        container_layout.setContentsMargins(0, 0, 0, 0)
+        container_layout.setSpacing(0)
+
+        title_lbl = QLabel("MrBot1000 v2.0.8")
+        title_lbl.setAlignment(Qt.AlignHCenter | Qt.AlignVCenter)
+        title_lbl.setStyleSheet(
+            "font-size:15px; font-weight:bold; padding:8px 0px; "
+            "color:#4fc3f7; background-color:#1a1a1f; border-bottom:1px solid #2b3034;"
+        )
+        container_layout.addWidget(title_lbl)
+
         tabs = QTabWidget()
-        self.setCentralWidget(tabs)
+        container_layout.addWidget(tabs)
+        self.setCentralWidget(container)
         tabs.addTab(self.create_management_tab(),  "Management")
         tabs.addTab(self.create_agents_tab(),      "Agents")
         tabs.addTab(self.create_file_browser_tab(),"Browse Root")
@@ -1210,7 +1237,7 @@ class MainWindow(QMainWindow):
             for a in self.db.get_recent_actions(20):
                 ts = self.db.ts_to_str(a["ts"])
                 self.db_actions_list.addItem(
-                    f"[{ts}] {a['trigger']}: {a['action_text'][:80]}")
+                    f"[{ts}] {a['trigger']}: {a['action_text']}")
             lines = []
             for c in self.db.get_recent_llm_calls(20):
                 ts     = self.db.ts_to_str(c["ts"])
@@ -1246,7 +1273,7 @@ class MainWindow(QMainWindow):
             ok = response and response.ok
             self.log_signal.emit(
                 "Payout sent" if ok
-                else f"Payout failed: {response.text[:80] if response else 'no response'}")
+                else f"Payout failed: {response.text if response else 'no response'}")
         elif tag == "register":
             if response and response.status_code == 201:
                 try:
@@ -1258,7 +1285,7 @@ class MainWindow(QMainWindow):
                 except Exception as e:
                     self.log_signal.emit(f"Register parse error: {e}")
             else:
-                err = response.text[:80] if response else "no response"
+                err = response.text if response else "no response"
                 self.log_signal.emit(f"Registration failed: {err}")
 
     def refresh_balance(self):
@@ -1573,11 +1600,11 @@ class MainWindow(QMainWindow):
         self.log_signal.emit(
             f"[Pipeline] {status} score={result.score:.2f} "
             f"| {action.proposer} → {action.action_type} "
-            f"| {result.summary[:80]}")
+            f"| {result.summary}")
         if hasattr(self, "thought_panel"):
             self.thought_panel.route(
                 "System",
-                f"Pipeline {status}: {action.description[:60]} | {result.summary[:60]}")
+                f"Pipeline {status}: {action.description} | {result.summary}")
 
     def _on_pipeline_executed(self, action, result):
         status = "✓" if result.success else "✗"

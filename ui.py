@@ -1034,7 +1034,7 @@ class UnifiedChatWidget(QDialog):
     def _append_notification(self, label: str, ts: str, text: str):
         """Append agent notifications to the collapsible sidebar panel."""
         if hasattr(self, '_notifications_list') and self._notifications_list.isVisible():
-            self._notifications_list.addItem(f"[{ts}] {label}: {text[:120]}")
+            self._notifications_list.addItem(f"[{ts}] {label}: {text}")
             sb = self._notifications_list.verticalScrollBar()
             sb.setValue(sb.maximum())
 
@@ -1455,7 +1455,7 @@ class SummarizerChatWindow(QDialog):
     def _append_notification(self, label: str, ts: str, text: str):
         """Append agent notifications to the collapsible sidebar panel."""
         if hasattr(self, '_notifications_list') and self._notifications_list.isVisible():
-            self._notifications_list.addItem(f"[{ts}] {label}: {text[:120]}")
+            self._notifications_list.addItem(f"[{ts}] {label}: {text}")
             sb = self._notifications_list.verticalScrollBar()
             sb.setValue(sb.maximum())
 
@@ -1826,7 +1826,7 @@ class AgentsTab(QWidget):
     def _append_notification(self, label: str, ts: str, text: str):
         """Append agent notifications to the collapsible sidebar panel."""
         if hasattr(self, '_notifications_list') and self._notifications_list.isVisible():
-            self._notifications_list.addItem(f"[{ts}] {label}: {text[:120]}")
+            self._notifications_list.addItem(f"[{ts}] {label}: {text}")
             sb = self._notifications_list.verticalScrollBar()
             sb.setValue(sb.maximum())
 

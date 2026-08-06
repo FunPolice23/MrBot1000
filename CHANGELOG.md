@@ -1,6 +1,61 @@
 # MrBot1000 v2.0 - CHANGELOG
 
-## [4.0.6] - 2026-08-06 - Env Config Alignment (.env / .env.example)
+## [2.0.9] - 2026-08-06 - Branding Alignment & Centered Title Header
+
+- **Renamed**: Window title changed from `MrBot1000 Agents v10 — Extended` to
+  `MrBot1000 v2.0.8` to match the product/changelog version (the v10/"Extended"
+  naming was stale and had no corresponding version history).
+- **UI**: Added a centered title header (`QLabel("MrBot1000 v2.0.8")`,
+  `Qt.AlignHCenter`) at the top of the program. `create_ui()` now wraps the
+  `QTabWidget` in a `QWidget` container with a `QVBoxLayout` so the title sits
+  centered above the tabs instead of relying on the OS window-title bar.
+- **Theme**: Title bar uses the app accent (`#4fc3f7` on `#1a1a1f`) with a subtle
+  bottom border, consistent with the Dark theme.
+
+---
+
+## [2.0.8] - 2026-08-06 - Safe-Mode CLI Restore & Text Truncation Fixes
+
+### Safe mode CLI flags restored
+- **Reverted** the 2.0.7 removal of the `-sm`/`--safe-mode` CLI flags. Added a short
+  `argparse` block at the top of `main.py` that maps `-sm`/`--safe-mode` to
+  `os.environ["MRBOT_SAFE_MODE"]="true"` (exact alias for the env var, read by
+  `startup_validation.py`). `parse_known_args()` keeps Qt's `sys.argv` untouched.
+- **README** Quick Start / Safe Mode section updated to show the flag as a supported
+  alias alongside the env-var form.
+
+### Text truncation fixes (long text no longer cut off)
+The chat/thought/notification *bodies* were never truncated (routing is intact); the
+cutoffs were on preview/label strings. Removed the caps:
+- `ui.py` `_append_notification()` (all 3 definitions): `text[:120]` → full `text`
+  (agent notifications now show complete messages).
+- `main.py` heartbeat status label: `trigger[:40]` → full `trigger` (thought overview).
+- `manager.py` `_set_worker_busy()`: `task[:60]`/`task[:50]` → full `task` (worker status).
+- `main.py` DB recent-actions list: `action_text[:80]` → full.
+- `main.py` pipeline validated/executed logs: `result.summary[:80]`,
+  `action.description[:60]` → full (routed to thought panel).
+- `main.py` HTTP error logs (payout/register): `response.text[:80]` → full.
+- **Intentionally left**: wallet address masking (`wallet[:8]...[-4:]`) for security,
+  model-name column width, and compact UI badges (style badge) remain truncated by design.
+
+---
+
+## [2.0.7] - 2026-08-06 - README Review & Accuracy Fixes
+
+- **Reviewed**: `README.md` against actual code state (files, test runner, safe mode, env).
+- **Fixed**: Restored `python main.py -sm` / `--safe-mode` CLI flags. `main.py` had no
+  argument parser, so a short `argparse` block was added that maps `-sm`/`--safe-mode`
+  to `os.environ["MRBOT_SAFE_MODE"]="true"` (exact alias for the env var, read by
+  `startup_validation.py`). `parse_known_args()` is used so Qt's `sys.argv` is untouched.
+- **Expanded**: "Key Files" table now lists the real agent modules
+  (`agents/coder.py`, `job_search_worker.py`, `fiverr_client.py`, `upwork_client.py`,
+  `opportunity_lifecycle.py`, `coordinator.py`, `analyst_worker.py`, `base_worker.py`).
+- **Noted**: CHANGELOG is on internal v4.0.x while product/README version remains v2.0
+  (intentional two-scheme numbering; documented in `CHANGELOG.md` header line).
+
+---
+
+## [2.0.6] - 2026-08-06 - Env Config Alignment (.env / .env.example)
 
 - **Problem**: `.env` and `.env.example` had diverged — 6 `MRBOT_THEME_*` vars
   (read by `theme_config.py`), `OLLAMA_MAIN_MODEL`, `PIPELINE_*`, `RESEARCH_CACHE_TTL`,
@@ -17,9 +72,9 @@
 
 ---
 
-## [4.0.5] - 2026-08-06 - Verification & Cleanup of 4.0.4
+## [2.0.5] - 2026-08-06 - Verification & Cleanup of 2.0.4
 
-- **Verified**: Ad-hoc behavior-level verification of 4.0.4 changes passed 24/24
+- **Verified**: Ad-hoc behavior-level verification of 2.0.4 changes passed 24/24
   (report: `C:\Users\cecil\AppData\Local\Temp\hermes-verify-404d.txt`).
   Confirmed: `project_file_tree()` lists only real files (no `source.py`/`_argcomplete.py`,
   no `.venv`/`site-packages` pollution); `research_all()` injects the tree as the
@@ -30,7 +85,7 @@
 
 ---
 
-## [4.0.4] - 2026-08-06 - Stop Hallucinated Files & Disabled-Platform Routing
+## [2.0.4] - 2026-08-06 - Stop Hallucinated Files & Disabled-Platform Routing
 
 ### Root-cause fix: subagents inventing non-existent files (source.py, _argcomplete.py)
 
@@ -50,7 +105,7 @@
 
 ---
 
-## [4.0.3] - 2026-08-06 - Coder Execution & Real Client Integration
+## [2.0.3] - 2026-08-06 - Coder Execution & Real Client Integration
 
 ### Coder Worker Implementation - NEW
 
@@ -77,7 +132,7 @@
 
 ---
 
-## [4.0.2] - 2026-08-06 - Exclusions & Guards
+## [2.0.2] - 2026-08-06 - Exclusions & Guards
 
 ### Job Discovery Fixes - Initial
 
@@ -87,7 +142,7 @@
 
 ---
 
-## [4.0.0] - 2026-08-06 - Opportunity Lifecycle Integration
+## [2.0.0] - 2026-08-06 - Opportunity Lifecycle Integration
 
 ### Task Routing & Decision-Making (A)
 
@@ -414,9 +469,9 @@ D:/MrBot1000_2.0/
 ├── .gitignore                # Git ignore template
 └── agents/
     ├── base_worker.py       # Base worker with path validation
-    ├── coder.py             # NEW (v4.0.3): Coder agent with file execution
+    ├── coder.py             # NEW (v2.0.3): Coder agent with file execution
     ├── summarizer.py        # Chat agent (handles SummarizerThread)
-    ├── job_search_worker.py # Job discovery agent (real client integration v4.0.2)
+    ├── job_search_worker.py # Job discovery agent (real client integration v2.0.2)
     ├── analyst_worker.py    # Proposal analysis
     ├── fiverr_client.py     # Fiverr RSS-based gig discovery
     ├── upwork_client.py     # Upwork API client
@@ -452,4 +507,4 @@ tests/                          # NEW - Test suite
 3. **Secure Execution**: Action pipeline with validation before file modifications
 4. **Provider Fallback**: OpenAI → Anthropic → Ollama
 5. **Cross-model Communication**: SharedContext JSON for state sharing
-6. **Real Gig Discovery**: RSS feeds and web search for actual freelance jobs (v4.0.3)
+6. **Real Gig Discovery**: RSS feeds and web search for actual freelance jobs (v2.0.3)

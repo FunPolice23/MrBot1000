@@ -1,4 +1,4 @@
-# MrBot1000 v2.0 — AI-Powered Earning Agent - W.I.P not a final product
+# MrBot1000 v2.0.8 — AI-Powered Earning Agent - W.I.P not a final product
 
 A real-time AI agent system for automated earning opportunity discovery, execution, and lifecycle tracking. Runs entirely locally — no cloud dependencies, no data sharing.
 
@@ -8,7 +8,7 @@ A real-time AI agent system for automated earning opportunity discovery, executi
 python main.py
 ```
 
-To exercise the workflow without making real changes, run either of these:
+To exercise the workflow without making real changes, run in safe mode:
 
 ```bash
 python main.py -sm
@@ -16,9 +16,23 @@ python main.py -sm
 python main.py --safe-mode
 ```
 
-This is equivalent to enabling `MRBOT_SAFE_MODE=true` for the session.
+This is equivalent to setting `MRBOT_SAFE_MODE=true` for the session.
 
 Requires: Python 3.11+, Ollama (local LLM server), and the packages listed in requirements.txt.
+
+### Safe Mode
+
+Safe mode validates actions and skips real file changes while the workflow is exercised. It can be enabled three ways:
+
+```bash
+python main.py -sm              # CLI flag (alias for MRBOT_SAFE_MODE=true)
+# or
+set MRBOT_SAFE_MODE=true        # Windows env var
+export MRBOT_SAFE_MODE=true     # Linux/macOS env var
+python main.py
+```
+
+Safe mode can also be toggled from the Management tab at runtime.
 
 ## What It Does
 
@@ -92,12 +106,20 @@ The Agents tab contains:
 | File | Purpose |
 |------|---------|
 | `main.py` | Application entry point, UI setup |
-| `manager.py` | Agent orchestration, intent routing, chat handling |
+| `manager.py` | Agent orchestration, intent routing, chat handling, heartbeat loop |
 | `action_pipeline.py` | Secure code execution with validation |
 | `earning_pipeline.py` | Income tracking pipeline |
+| `agents/base_worker.py` | Shared worker base: file read/write/search, `project_file_tree()`, `research_all()` |
+| `agents/coder.py` | Coder worker — real file execution, refactoring, bug fixes |
+| `agents/job_search_worker.py` | JobSearch worker — finds gigs via real platform clients |
+| `agents/fiverr_client.py` | Fiverr gig discovery (RSS) |
+| `agents/upwork_client.py` | Upwork gig discovery (API) |
+| `agents/opportunity_lifecycle.py` | Opportunity lifecycle state machine |
+| `agents/coordinator.py` | Cross-model SharedContext bridge |
+| `agents/analyst_worker.py` | Proposal metrics, job evaluation |
 | `Agent.md` | Agent runtime contract & rules |
 | `ARCHITECTURE.md` | Full system architecture documentation |
-| `CHANGELOG.md` | Change history |
+| `CHANGELOG.md` | Change history (currently v4.0.x) |
 | `tests/__main__.py` | Test suite runner |
 
 ## Configuration
