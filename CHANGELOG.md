@@ -1,5 +1,111 @@
 # MrBot1000 v2.0 - CHANGELOG
 
+## [2.0.20] - 2026-08-06 - Task Workspaces: work/<platform>/<job_id> + Requirement Fulfilment
+
+### Per-task deliverable workspace
+New module `agents/task_workspace.py` gives the agent a real place to DO a gig
+and verify it against the gig's requirements before handing it back:
+- `TaskWorkspace(platform, job_id)` creates `work/<platform>/<job_id>/`.
+- `save(filename, content)` writes deliverables with a pre-overwrite `.bak`
+  backup, sandboxed strictly inside the workspace (path-traversal blocked).
+- `verify(requirements, job)` runs `document_scanner.verify_completion` — the
+  real QA gate — checking the saved files satisfy the gig's requirements
+  (derived from the JobRecord's skills/title via `infer_requirements`, or
+  passed explicitly).
+- `complete()` archives verified deliverables to `.../delivered/` and records a
+  `status.json` manifest (new → working → done → submitted).
+- `submit()` marks `status=submitted` and returns the archive location. This is
+  **local packaging only** — real Fiverr/Upwork upload is a deliberate, later
+  plug-in point (the manager's `_fulfill_job` already routes `operation` in
+  `fulfill`/`complete_job`/`deliver` here).
+
+### Planner isolation
+`work/` added to `project_file_tree`'s skip set so the Coder/CEO planner never
+tries to edit the agent's own deliverables. Writes into `work/` are still allowed
+(it is NOT in `WRITE_EXCLUSION_DIRS`), so the workspace is usable but invisible
+to the code-editing planner.
+
+### Manager wiring
+`_execute_with_worker` now dispatches `fulfill`/`complete_job`/`deliver`
+operations to `_fulfill_job`, which builds the workspace, saves the deliverable,
+verifies requirements, and reports the real result (no simulated output).
+
+### Verification
+Ad-hoc round-trip: workspace created under `work/fiverr/job123`; deliverable
+saved with `.bak` backup; `infer_requirements` derives `[deliverable, python,
+scraping, report]`; `verify_completion` gates on quality (substantive doc →
+`can_submit=True`, thin doc → correctly rejected); `complete()` archives to
+`delivered/`; `submit()` → `status=submitted`; traversal (`../escape.py`) blocked;
+`work/` excluded from `project_file_tree`. Manager `_fulfill_job` returns
+`FULFILLED fiverr:job999 … requirements met (q=0.98), submitted`.
+
+## [2.0.19] - 2026-08-06 - ROOT_FOLDER = Project Root + Backup-Before-Edit Safety
+
+### ROOT_FOLDER now points to the project root
+`agents/base_worker.ROOT_FOLDER` was `dirname(__file__)` → the `agents/` subfolder
+only. This meant the project file tree the Coder/CEO planner saw listed ONLY
+`agents/*.py`, and `safe_write_file` was sandboxed to `agents/` — so a CEO
+directive to "refactor action_pipeline.py" (a root-level file) resolved to
+`agents/action_pipeline.py` (doesn't exist) → Coder skipped with FILE NOT FOUND.
+Changed `ROOT_FOLDER` to `parent.parent` (project root). This also matches the
+existing `tests/test_root_scope.py` assertion, which already expected project
+root. Now `project_file_tree` lists the whole codebase (main.py, manager.py,
+action_pipeline.py, agents/*, etc.), grounded so the model cannot hallucinate
+non-existent files.
+
+### Backup-before-edit + revert (no clobbering)
+`safe_write_file` now backs up any EXISTING file to `ROOT_FOLDER/.mrbot_backups/`
+(preserving relative path + timestamp, e.g.
+`.mrbot_backups/action_pipeline.py.20260806_160000.bak`) BEFORE overwriting, so
+every autonomous edit is revertible/recoverable. Added `restore_last_backup()`
+to roll a file back to its most recent backup. Added `WRITE_EXCLUSION_DIRS`
+(.git, .venv, __pycache__, caches, github_upload mirror, .mrbot_backups) that
+`safe_write_file`/`restore_last_backup` refuse to touch, keeping VCS metadata,
+virtualenvs, and the external publish mirror safe. The filename blocklist (.env,
+credentials) and out-of-root/symlink rejection are retained.
+
+### Bug C — explicitly NOT suppressed
+Per user direction: when no proposals are found (metrics store empty →
+proposals=0), that is fine. The Analyst keeps checking until populated; it is not
+harmful, just nothing to analyze. No skip-on-empty logic added.
+
+### Verification
+Ad-hoc: ROOT_FOLDER resolves to project root; `project_file_tree()` now includes
+`main.py`/`manager.py`/`action_pipeline.py`; `safe_write_file` backs up an
+existing file before overwrite and the backup is restorable via
+`restore_last_backup`; writes into `.git`/`.env` are BLOCKED;
+`tests/test_root_scope.py` passes.
+
+## [2.0.18] - 2026-08-06 - Repo Recovery + Ollama keep_alive TTL + Focus→Worker Routing
+
+### Critical: corrupted working tree recovered
+`agents/base_worker.py` in the working tree had been **truncated** — the
+`WorkerAgent` class (452 lines) was deleted, leaving only 105 lines. The module
+could not import (`ImportError: cannot import name 'WorkerAgent'`), so the app
+would fail to start. Also missing from the file (but imported by `coder.py`,
+`manager.py`, etc.): `project_file_tree` and `WORKER_REGISTRY`.
+Fix: restored `WorkerAgent` from git HEAD and re-added `project_file_tree` +
+`WORKER_REGISTRY`. Verified the full import chain
+(`base_worker` → all workers → `manager`) now loads.
+
+### Bug B — Ollama model permanently pinned (keep_alive=-1)
+`WorkerAgent._call_ollama` passed `keep_alive=-1`, pinning BOTH the main and
+chat models in VRAM forever. On a single 6GB GPU this causes `RuntimeError`
+contention under load (seen in the 15:10 live log). Changed to a bounded TTL
+via new env `OLLAMA_KEEP_ALIVE` (default `300`s) so Ollama can evict under
+memory pressure while staying warm. `keep_alive=-1` removed from the call.
+
+### Focus→Worker routing (dead map wired)
+`_FOCUS_WORKER_MAP` existed but was never consulted, so "code quality" heartbeats
+were dispatched to whichever worker the LLM chose (often Analyst), leaving the
+Coder path unexercised. `_parse_decision` now falls back to the focus map when
+the CEO emits no explicit `ACTION[Worker]:`, so "code quality" → Coder reliably.
+
+### Verification
+Ad-hoc: full import chain loads; `project_file_tree()` runs; `CoderWorker`
+registered + `analyze_and_fix` reachable; `_parse_decision(focus="code quality")`
+→ `("action", "Coder", ...)`. (No full pytest run.)
+
 ## [2.0.17] - 2026-08-06 - Fix Coder Worker Never Registered (Bug D)
 
 ### Root cause

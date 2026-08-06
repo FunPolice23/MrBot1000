@@ -30,6 +30,8 @@ from agents.opportunity_lifecycle import (
 )
 # Project root (shared constant from base_worker) — used by the real execution engine
 from agents.base_worker import ROOT_FOLDER
+# Per-task deliverable workspaces (work/<platform>/<job_id>/)
+from agents.task_workspace import TaskWorkspace, workspace_for
 
 # ── Opportunity scheduling ────────────────────────────────────────────────────
 OPPORTUNITY_DISCOVERY_INTERVAL = int(os.getenv("OPPORTUNITY_DISCOVERY_INTERVAL", "5"))  # Every 5 heartbeats
@@ -347,7 +349,7 @@ class ManagerThread(QThread):
         self._m_think(f"Decision: {decision}")
         return decision
 
-    def _parse_decision(self, decision: str):
+    def _parse_decision(self, decision: str, focus: str = ""):
         lower = decision.lower()
         m = re.search(r"action\[(\w+)\]:\s*(.+)", decision, re.IGNORECASE)
         if m:
@@ -361,6 +363,12 @@ class ManagerThread(QThread):
             action = decision.split("ACTION:")[-1].strip()
             worker = _route_to_worker(action)
             return "action", worker, action
+        # No explicit ACTION[Worker]: — let the heartbeat focus pick the worker
+        # so e.g. "code quality" reliably routes to Coder (not left to LLM whim).
+        focus_key = (focus or "").split("—")[0].strip().lower()
+        focus_worker = _FOCUS_WORKER_MAP.get(focus_key)
+        if focus_worker:
+            return "action", focus_worker, f"Focus-area task for {focus_worker}: {focus}"
         return "unclear", "", decision
 
     # ── Real execution engine ─────────────────────────────────────────────────
@@ -533,13 +541,51 @@ class ManagerThread(QThread):
                             ok = False
             else:
                 # Unknown operation — do NOT pretend. Report honestly.
-                evidence = (f"Operation '{operation}' for {worker_name} has no real "
-                            f"tool implementation; no simulated result returned.")
-                ok = False
+                if operation in ("fulfill", "complete_job", "deliver"):
+                    evidence = self._fulfill_job(plan, action, worker_name)
+                    ok = "FAILED" not in evidence and "Skipped" not in evidence
+                else:
+                    evidence = (f"Operation '{operation}' for {worker_name} has no real "
+                                f"tool implementation; no simulated result returned.")
+                    ok = False
 
         except Exception as e:
             evidence = f"EXECUTION ERROR ({type(e).__name__}): {e}"
             ok = False
+
+    def _fulfill_job(self, plan: dict, action: str, worker_name: str) -> str:
+        """Create work/<platform>/<job_id>/ and complete the gig's deliverable.
+
+        Reads a job spec from the plan/action: platform, job_id, requirements,
+        and deliverable filename + content. Saves into the workspace, verifies
+        against requirements via document_scanner, archives on pass.
+        """
+        platform = (plan.get("platform") or "").lower() or "unknown"
+        job_id   = str(plan.get("job_id") or plan.get("id") or "").strip() or "unknown"
+        reqs     = plan.get("requirements") or None
+        deliverable_name = plan.get("deliverable") or plan.get("file") or f"{platform}_deliverable.md"
+        content   = plan.get("content") or plan.get("deliverable_content") or action
+
+        try:
+            ws = workspace_for({"platform": platform, "job_id": job_id},
+                               root_folder=ROOT_FOLDER, log_signal=self.log)
+            self._a_think(f"[Fulfill] created workspace {ws.path}")
+            saved = ws.save(deliverable_name, content)
+            if not saved:
+                return "FULFILL FAILED: could not write deliverable to workspace"
+            res = ws.complete(requirements=reqs,
+                              job={"platform": platform, "job_id": job_id,
+                                   "skills": reqs or []})
+            if res.get("completed"):
+                sub = ws.submit()
+                return (f"FULFILLED {platform}:{job_id} — deliverable saved, "
+                        f"requirements met (q={res['quality_score']:.2f}), "
+                        f"submitted (archive: {sub['archive']})")
+            return (f"FULFILL incomplete {platform}:{job_id} — requirements not met: "
+                    f"{res.get('missing_items')} {res.get('issues')}. "
+                    f"Deliverable saved; retry with better content.")
+        except Exception as e:
+            return f"FULFILL FAILED: {type(e).__name__}: {e}"
 
         # ── Emit the REAL result (verified evidence), not LLM self-narrative ──
         status = "DONE" if ok else "NO-OP/FAILED"
@@ -573,7 +619,7 @@ class ManagerThread(QThread):
             self.log.emit(f"CEO LLM error: {decision}")
             return
 
-        dtype, worker_name, content = self._parse_decision(decision)
+        dtype, worker_name, content = self._parse_decision(decision, focus)
 
         if dtype == "no_action":
             self.log.emit(f"CEO: No action — {content[:80]}")
