@@ -1,5 +1,124 @@
 # MrBot1000 v2.0 - CHANGELOG
 
+## [2.0.17] - 2026-08-06 - Fix Coder Worker Never Registered (Bug D)
+
+### Root cause
+`manager.py` resolves every `ACTION[Coder]` via `_roster.get("Coder")`, which
+fell back to the bare base `WorkerAgent` (`self.worker`). `CoderWorker` exists
+and has `analyze_and_fix()`, but it was **never registered** into the roster
+(only `JobSearch` + `Analyst` were, in `main.py`). So every Coder task raised
+`AttributeError: 'WorkerAgent' object has no attribute 'analyze_and_fix'`
+and the CEO got stuck in an infinite "refactor action_pipeline.py" loop —
+≈20 failed Coder tasks per long run.
+
+### Fix
+Registered `CoderWorker` into the manager roster in `main.py`, matching the
+existing `JobSearch`/`Analyst` registration pattern (with a non-fatal try/except).
+
+### Verification
+Ad-hoc script confirmed: `Coder` in roster → `CoderWorker` instance →
+`hasattr(analyze_and_fix)` is True. (No full pytest run.)
+
+## [2.0.16] - 2026-08-06 - Live-Log Analysis (full run) + Fiverr count= Fix
+
+### Full log triage (run starting 15:10:10)
+Three distinct issues surfaced; one is a definite code bug (fixed here), two are
+environmental/config and documented as findings.
+
+#### Bug A — FIXED: Fiverr `find_gigs()` called with wrong kwarg
+- Log: `[WARN][JobSearchWorker] Fiverr search error: FiverrClient.find_gigs()
+  got an unexpected keyword argument 'count'` → `Found 0 new jobs on Fiverr`.
+- Root cause (proven on disk): `agents/job_search_worker.py:319` passed
+  `count=10`, but `FiverrClient.find_gigs(self, query="python", limit=20)`
+  takes `limit`, not `count`. The `except` swallowed it → 0 gigs every cycle.
+- Fix: `count=10` → `limit=10`. Verified with a mocked FiverrClient:
+  `search("fiverr")` now calls `find_gigs(query=, limit=10)` and maps gigs.
+
+#### Bug B — FINDING (not patched): main-model `RuntimeError` retry collapse
+- Log (15:14:07 → 15:14:47): `ollama failed (RuntimeError), trying next...`
+  repeated, then `ERROR: LLM unavailable`. The main model
+  (`gemma-4-E2B`) errored on 3 consecutive heartbeats while the chat model
+  (`gemma-3-1b`) kept responding.
+- Root cause (proven): `base_worker.py:_call_ollama` calls Ollama with
+  `keep_alive=-1` (line 574) — models are pinned in VRAM and NEVER released.
+  On a single 6GB GPU, pinning both the ~2.7GB main model AND the chat model
+  concurrently causes the main model to intermittently fail under load. The
+  retry loop (`for attempt in range(3)`) only retries, it doesn't back off or
+  fall back to the chat model, so a transient main-model failure cascades to
+  "LLM unavailable".
+- Not patched yet: this is a resource/config tradeoff (pinning helps latency,
+  unpinning helps stability). Recommended follow-up: set `keep_alive` to a short
+  TTL (e.g. 5m) or make the retry fall back to the chat model instead of
+  failing. Will address in 2.0.17 on your go-ahead.
+
+#### Bug C — FINDING (expected behavior, no fix): Analyst reports zeros
+- Log: every `ACTION[Analyst]` → `RESULT: REPORT generated: proposals=0,
+  avg_quality=0, submissions=0`.
+- Root cause (proven): `AnalystWorker._metrics_store` is empty because no
+  proposals have been analyzed in this flow (`analyze_proposal` is never
+  called). `generate_metrics_report()` correctly returns the honest empty
+  result. Not a bug — but it means the CEO keeps assigning Analyst "analyze
+  proposals" tasks that have no data to analyze, so those heartbeats are
+  effectively no-ops. Suggested follow-up: have the CEO skip Analyst when
+  `_metrics_store` is empty, or feed it real gig data from JobSearch.
+
+### Verification (ad-hoc)
+- `job_search_worker.py` parses (CRLF-safe).
+- No `count=` kwarg remains; `find_gigs(query=, limit=10)` confirmed via mock.
+- Chat model in `.env` (`gemma-3-1b`) matches the log — no config drift there.
+
+## [2.0.15] - 2026-08-06 - Auto-Refresh Ollama Models in Settings
+
+### Issue
+Switching the chat/main Ollama model (fixed in 2.0.14) still required manually
+clicking **Refresh** on the model dropdown before the list of local models
+appeared. The dropdowns only contained the hardcoded default list until Refresh
+was pressed.
+
+### Fix
+- Stored the `QTabWidget` as `self.tabs` and connected `currentChanged` to a new
+  `_on_tab_changed` handler.
+- On the **first** time the Settings tab is opened, the app automatically calls
+  `refresh_ollama_models()`, which queries `http://127.0.0.1:11434/api/tags` and
+  populates both the Main and Chat model dropdowns with the locally-installed
+  Ollama models. A flag (`_ollama_autorefresh_done`) ensures it only runs once
+  per session, so Ollama isn't re-queried on every tab switch.
+- Manual Refresh still works as before.
+
+### Verification (ad-hoc)
+- `main.py` syntax OK.
+- `_on_tab_changed` only triggers the refresh on the Settings tab index and only
+  once (guarded by `_ollama_autorefresh_done`).
+- Version display bumped to `v2.0.15` in `main.py` + `README.md`.
+
+## [2.0.14] - 2026-08-06 - Ollama Model Lifecycle: Clean Exit + Live Switching
+
+### Issue 1 — Models stayed resident after exit
+`_shutdown_ollama()` read `OLLAMA_MODEL` (a var that was removed during the
+`.env` cleanup) but **not `OLLAMA_MAIN_MODEL`**, the actual canonical main model.
+So on exit the main model was never sent a `keep_alive:0` unload and remained
+loaded in VRAM. Fixed: unload **both** `OLLAMA_MAIN_MODEL` and
+`OLLAMA_CHAT_MODEL` via `ollama.chat(..., keep_alive=0)`. Also switched from a raw
+`requests.post` to the `ollama` SDK call (same `keep_alive:0` semantics, no new dep).
+
+### Issue 2 — Switching models required a full restart
+`save_settings()` wrote the new model to `.env` and reloaded dotenv, but never
+pushed it into the running `WorkerAgent` / `ManagerThread`, nor unloaded the
+*old* model. So the chat kept using the stale model until the program was closed
+and reopened. Fixed: on Save, when the chat model selection changes, the code
+unloads the previously-active chat model (`ollama.chat(..., keep_alive=0)`) and
+updates `self.worker._chat_ollama_model_override` + `self.manager` live. New
+chats immediately use the selected model — no restart. Unchanged selections are
+a no-op (no spurious unload).
+
+### Verification (ad-hoc)
+- `main.py` syntax OK; `save_settings()` (with embedded live-switch block)
+  compiles cleanly.
+- Exit unload: with `OLLAMA_MAIN_MODEL` + `OLLAMA_CHAT_MODEL` set, both receive a
+  `keep_alive:0` unload call.
+- Live switch: changed selection → old model unloaded + worker/manager point at
+  new model; unchanged selection → zero unload calls.
+
 ## [2.0.13] - 2026-08-06 - Restore Custom Theme System
 
 ### Root cause

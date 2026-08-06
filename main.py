@@ -184,7 +184,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("MrBot1000 v2.0.12")
+        self.setWindowTitle("MrBot1000 v2.0.17")
         self.resize(1450, 950)
         self.root_folder  = ROOT_FOLDER
         self._http_workers = []
@@ -227,6 +227,13 @@ class MainWindow(QMainWindow):
             self.manager.register_worker("Analyst", self.analyst_worker, "code analysis")
         except Exception:
             self.analyst_worker = None
+        try:
+            from agents.coder import CoderWorker
+            self.coder_worker = CoderWorker(api_key, self.log_signal, db=self.db)
+            self.manager.register_worker("Coder", self.coder_worker, "code refactoring")
+        except Exception:
+            self.coder_worker = None
+            # Not fatal — Coder ACTIONs fall back to base worker (Bug D fixed)
 
         self.summarizer.chat_reply.connect(self._on_summarizer_chat_reply)
 
@@ -316,17 +323,17 @@ class MainWindow(QMainWindow):
         if not OLLAMA_AVAILABLE or not ollama:
             return
         try:
-            main_model = os.getenv("OLLAMA_MODEL", "").strip()
+            # Unload the two canonical configured models. Previously this only
+            # read OLLAMA_MODEL (now removed), so OLLAMA_MAIN_MODEL was never
+            # unloaded and stayed resident after exit.
+            main_model = os.getenv("OLLAMA_MAIN_MODEL", "").strip()
             chat_model = os.getenv("OLLAMA_CHAT_MODEL", "").strip()
             for model in {main_model, chat_model}:
                 if not model:
                     continue
                 try:
-                    requests.post(
-                        "http://127.0.0.1:11434/api/chat",
-                        json={"model": model, "messages": [], "keep_alive": 0},
-                        timeout=30,
-                    )
+                    # keep_alive:0 tells Ollama to release the model from VRAM
+                    ollama.chat(model=model, messages=[], keep_alive=0)
                     self.log_signal.emit(f"[Ollama] unloaded model={model}")
                 except Exception as e:
                     self.log_signal.emit(f"[Ollama] failed to unload {model}: {e}")
@@ -485,7 +492,7 @@ class MainWindow(QMainWindow):
         container_layout.setContentsMargins(0, 0, 0, 0)
         container_layout.setSpacing(0)
 
-        title_lbl = QLabel("MrBot1000 v2.0.12")
+        title_lbl = QLabel("MrBot1000 v2.0.17")
         title_lbl.setAlignment(Qt.AlignHCenter | Qt.AlignVCenter)
         title_lbl.setStyleSheet(
             "font-size:15px; font-weight:bold; padding:8px 0px; "
@@ -494,6 +501,7 @@ class MainWindow(QMainWindow):
         container_layout.addWidget(title_lbl)
 
         tabs = QTabWidget()
+        self.tabs = tabs
         container_layout.addWidget(tabs)
         self.setCentralWidget(container)
         tabs.addTab(self.create_management_tab(),  "Management")
@@ -504,6 +512,12 @@ class MainWindow(QMainWindow):
         tabs.addTab(self.create_settings_tab(),    "Settings")
         tabs.addTab(self.create_logs_tab(),        "Live Logs")
         tabs.addTab(self.create_db_stats_tab(),    "DB Stats")
+
+        # Auto-populate the Ollama model dropdowns the first time the Settings
+        # tab is opened, so you don't have to click Refresh manually (v2.0.17).
+        self._ollama_autorefresh_done = False
+        self._settings_tab_index = tabs.indexOf(self.create_settings_tab())
+        tabs.currentChanged.connect(self._on_tab_changed)
 
         # Chat handled in Agents tab
 
@@ -1469,6 +1483,16 @@ class MainWindow(QMainWindow):
                 msgs.append(f"Ollama Error: {e}")
         QMessageBox.information(self, "Connection Test", "\n".join(msgs))
 
+    def _on_tab_changed(self, index: int):
+        # Auto-populate the Ollama model dropdowns the first time the Settings
+        # tab is shown (v2.0.17). Avoids requiring a manual Refresh click and
+        # avoids re-querying Ollama on every tab switch.
+        if self._ollama_autorefresh_done:
+            return
+        if index == self._settings_tab_index:
+            self._ollama_autorefresh_done = True
+            self.refresh_ollama_models()
+
     def refresh_ollama_models(self):
         self.refresh_ollama_btn.setEnabled(False)
         self.refresh_ollama_btn.setText("Refreshing...")
@@ -1556,6 +1580,24 @@ class MainWindow(QMainWindow):
             load_dotenv(override=True)
         except Exception:
             pass
+
+        # ── Live model switch (no restart required) ──────────────────────────
+        # When the chat (or main) Ollama model changes, unload the previously
+        # active model from VRAM and point the running worker/manager at the new
+        # one so subsequent chats use it immediately.
+        new_chat = self.ollama_chat_model_combo.currentText().strip()
+        new_main = self.ollama_model_combo.currentText().strip()
+        old_chat = getattr(self.worker, "_chat_ollama_model_override", None) or ""
+        if new_chat and new_chat != old_chat and OLLAMA_AVAILABLE and ollama:
+            try:
+                ollama.chat(model=old_chat, messages=[], keep_alive=0)
+                self.log_signal.emit(f"[Ollama] chat model switched; unloaded old={old_chat}")
+            except Exception:
+                pass
+            self.worker._chat_ollama_model_override = new_chat
+            if hasattr(self.manager, "_chat_ollama_model_override"):
+                self.manager._chat_ollama_model_override = new_chat
+            self.log_signal.emit(f"[Ollama] chat model now live: {new_chat}")
 
         # Update live objects
         self.worker.max_file_size = self.max_file_spin.value() * 1024 * 1024

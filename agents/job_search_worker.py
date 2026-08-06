@@ -316,7 +316,7 @@ class JobSearchWorker(WorkerAgent):
             try:
                 gigs = self._fiverr_client.find_gigs(
                     query=skill_str.split(",")[0] or "python",
-                    count=10
+                    limit=10
                 )
                 for g in gigs:
                     jr = JobRecord(
