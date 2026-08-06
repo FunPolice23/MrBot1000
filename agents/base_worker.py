@@ -65,9 +65,14 @@ MAX_FILE_SIZE = 500 * 1024 * 1024  # 500 MB
 
 # Real project file tree (excludes heavy/vendor dirs). Used to ground subagent
 # prompts so the model stops hallucinating non-existent files like source.py.
+# Also excludes publish/mirror/working dirs the program never needs to see.
 _CODEBASE_INDEX_SKIP_DIRS = {
     ".git", "__pycache__", ".venv", "venv", "node_modules",
     ".pytest_cache", "build", "dist", ".mypy_cache",
+    # Non-required / external folders the agents must not see or edit:
+    "github_upload",   # external publish mirror (lives at D:/github_upload)
+    ".hermes",         # Hermes agent tooling state
+    "test_results",    # local test-run artifacts
 }
 
 

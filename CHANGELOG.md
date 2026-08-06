@@ -1,6 +1,113 @@
 # MrBot1000 v2.0 - CHANGELOG
 
-## [2.0.10] - 2026-08-06 - Real Execution Engine (kill the simulation)
+## [2.0.12] - 2026-08-06 - JobSearch Web Branch Fix (honest fail)
+
+Continuation of the 2.0.11 live-log analysis. The `web` job-search branch was
+**doubly dead**:
+
+1. It was unreachable — `elif platform in self.ACTIVE_PLATFORMS` never matched
+   `"web"` because `ACTIVE_PLATFORMS = PLATFORMS` and `"web"` is not a key in
+   `PLATFORMS`. (Noted as a secondary issue in 2.0.11.)
+2. Even when reached, it did `from library import web_search`, but **`library.py`
+   has no `web_search` attribute** and there is no importable `web_search` in
+   MrBot1000's own process (verified: `hermes_tools.web_search` and a top-level
+   `web_search` are both `ModuleNotFoundError`). So it would `ImportError` →
+   swallowed by `except Exception` → misleading `Found 0 new jobs on web` for a
+   search that never ran.
+
+### Fix
+- Made the `web` branch reachable: `elif platform == "web" or platform in
+  self.ACTIVE_PLATFORMS`.
+- Split the lazy import into its own `try`; if `web_search` cannot be imported,
+  log `Web search unavailable in this environment` and return `[]` **honestly**
+  instead of emitting a fake "0 jobs found" line.
+- The inner query still runs only when the import succeeds.
+
+### Verification (ad-hoc, mocked — no network)
+- `search("web")` with a mock `web_search` injected via `sys.modules` → returns
+  the mapped `JobRecord` (branch now reaches the real query).
+- `search("web")` with no `web_search` importable → returns `[]` + honest
+  "unavailable" warning (no swallowed crash, no fake count).
+- `search("fiverr")` and `search("upwork")` regression-checked → still route to
+  their real clients; web path not triggered.
+
+## [2.0.11] - 2026-08-06 - Live-Log Analysis & Job-Search Fix
+
+### Log analyzed
+Live run of v2.0.10 (CEO ManagerThread, Ollama `gemma-4-E2B` main + `LFM2.5-1.2B` chat),
+heartbeats #1–#34. Goal: find what the real-execution engine actually does vs. reports.
+
+### Findings (proven against source, not guessed)
+
+1. **JobSearch fetched 0 gigs — real bug, now FIXED.**
+   - Symptom: every `search('fiverr')` logged `Fiverr client initialized` then
+     `Found 0 new jobs on fiverr` with no error.
+   - Root cause: `manager.py` normalizes the planner platform to **lowercase**
+     (`platform = (plan.get("platform") or "").lower()`, line 466) and passes
+     `"fiverr"`. But `JobSearchWorker.search()` only runs the real Fiverr RSS query
+     inside `if platform == "Fiverr"` (capital F, `job_search_worker.py:309`).
+     Lowercase `"fiverr"` matched **none** of the `if/elif` branches → client was
+     initialized but never queried → empty list, silently.
+   - Fix: normalize platform to canonical case at the top of `search()`
+     (`_CANON = {"fiverr":"Fiverr","upwork":"Upwork","web":"web"}`).
+   - Verified: normalization routes `fiverr→Fiverr`, `upwork→Upwork`, `web→web`
+     to the correct client branches (syntactic + branch-routing check passed).
+   - Secondary (not exercised in this log, noted): the `web` branch
+     (`elif platform in self.ACTIVE_PLATFORMS`) is also dead because
+     `ACTIVE_PLATFORMS = PLATFORMS` and `"web"` is not a key in `PLATFORMS`.
+     Left as a known issue; log only used `fiverr`.
+
+2. **`ROOT_FOLDER` NameError was already fixed on disk — log reflects a stale run.**
+   - Symptom in log (heartbeats #6, #17, #19, #20, #21):
+     `EXECUTION ERROR (NameError): name 'ROOT_FOLDER' is not defined`.
+   - Reality: `manager.py` already imports it (`from agents.base_worker import
+     ROOT_FOLDER`, lines 31–32) and `ROOT_FOLDER = str(Path(__file__).resolve()
+     .parent.parent)` is defined in `agents/base_worker.py`. The error came from the
+     already-running process that had loaded the pre-import module. Restarting the
+     program picks up the fix. Proven: `os.path.join(ROOT_FOLDER, target)` resolves
+     to an existing file.
+
+3. **Coder now correctly SKIPS non-existent files (honest, no hallucination).**
+   - The LLM planner repeatedly emitted `agents/analyst.py` — a **ghost file**. The
+     real module is `agents/analyst_worker.py`. Under the v2.0.10 engine this now
+     hits `FILE NOT FOUND: agents/analyst.py — cannot edit a non-existent file.
+     Skipped.` instead of fabricating an edit. (LLM filename drift is a model-planning
+     issue, not an engine bug; the engine handled it correctly.)
+
+4. **Metrics report zeros are correct, not a failure.**
+   - `generate_metrics_report()` returns `proposals=0, avg_quality=0, submissions=0`
+     because `AnalystWorker._metrics_store` is empty — no proposals have been analyzed
+     yet (`analyze_proposal` is never called in this flow). This is honest output,
+     not a swallowed error.
+
+### Net
+- 1 real code fix (Fiverr platform-case mismatch).
+- 0 regressions introduced.
+- The engine's "honest RESULT" discipline held: no file edits or gig counts were
+  fabricated anywhere in the 34-heartbeat run.
+
+## [2.0.10a] - 2026-08-06 - Text-Truncation Widening
+
+Widened the content channels that were silently cutting off useful information
+(numbers in brackets were the old character caps):
+
+- **M→A comms** (`manager.py`): `f"[To {worker}] Execute: {action[:80]}"` → full `action`.
+- **A→M result echo** (`manager.py`): `f"[{worker}] {evidence[:400]}"` → full `evidence`.
+- **Pipeline executed/rejected** (`main.py`): `result.message[:80]` → full;
+  `reason[:80]` → full.
+- **Rejected-gig alert** (`main.py`): `description[:50]` + `reason[:60]` → full.
+- **Gig description** (`manager.py`): `job.get('description','')[:300]` → full.
+- **DB Stats saved summary** (`ui.py`): `notification[:120]` removed.
+
+Intentionally **preserved** compact UI labels (not content channels):
+badge `description[:60]`, roster `task[:30]`, log model `[:24]`, wallet mask `[:8]`,
+and the brief CEO log preview `action[:80]` at `manager.py:588`.
+
+### Verification
+Static scan confirms no `[:N]` truncation remains on the widened content channels
+(except the intentional CEO-preview slice). All five message paths now emit full text.
+
+## [2.0.10] - 2026-08-06 - Fix: Hallucinated File Edits & Fake Results
 
 ### Root cause
 `_execute_with_worker()` (manager.py) called `worker.llm(chat=True)` and logged the

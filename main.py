@@ -211,7 +211,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("MrBot1000 v2.0.8")
+        self.setWindowTitle("MrBot1000 v2.0.10")
         self.resize(1450, 950)
         self.root_folder  = ROOT_FOLDER
         self._http_workers = []
@@ -512,7 +512,7 @@ class MainWindow(QMainWindow):
         container_layout.setContentsMargins(0, 0, 0, 0)
         container_layout.setSpacing(0)
 
-        title_lbl = QLabel("MrBot1000 v2.0.8")
+        title_lbl = QLabel("MrBot1000 v2.0.10")
         title_lbl.setAlignment(Qt.AlignHCenter | Qt.AlignVCenter)
         title_lbl.setStyleSheet(
             "font-size:15px; font-weight:bold; padding:8px 0px; "
@@ -1610,16 +1610,16 @@ class MainWindow(QMainWindow):
         status = "✓" if result.success else "✗"
         self.log_signal.emit(
             f"[Pipeline] {status} EXECUTED {action.action_type} "
-            f"by {action.proposer}: {result.message[:80]}")
+            f"by {action.proposer}: {result.message}")
 
     def _on_pipeline_rejected(self, action, reason):
         self.log_signal.emit(
             f"[Pipeline] REJECTED {action.action_type} "
-            f"by {action.proposer}: {reason[:80]}")
+            f"by {action.proposer}: {reason}")
         if hasattr(self, "thought_panel"):
             self.thought_panel.route(
                 "System",
-                f"⚠ Rejected: {action.description[:50]} | {reason[:60]}")
+                f"⚠ Rejected: {action.description} | {reason}")
 
     def _validate_clipboard_code(self):
         """Quick-validate whatever code is in the clipboard."""

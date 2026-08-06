@@ -273,6 +273,12 @@ class JobSearchWorker(WorkerAgent):
     # ── Search ────────────────────────────────────────────────────────
 
     def search(self, platform: str, skill_tags: List[str] = None) -> List[JobRecord]:
+        # Normalize platform to canonical case so the real clients actually run.
+        # The manager passes lowercase ("fiverr"/"upwork"/"web"); the client
+        # branches below expect capitalized "Fiverr"/"Upwork"/"web".
+        _CANON = {"fiverr": "Fiverr", "upwork": "Upwork", "web": "web"}
+        platform = _CANON.get((platform or "").strip().lower(), platform)
+
         # Guard: Skip disabled/excluded platforms
         if platform in self.EXCLUDED_PLATFORMS:
             self._logger.info(f"SKIPPING excluded platform: {platform}")
@@ -351,10 +357,18 @@ class JobSearchWorker(WorkerAgent):
             except Exception as e:
                 self._logger.warn(f"Upwork search error: {e}")
         
-        # Web search fallback for other platforms
-        elif platform in self.ACTIVE_PLATFORMS:
+        # Web search fallback for other platforms (explicit "web" + any other active platform)
+        elif platform == "web" or platform in self.ACTIVE_PLATFORMS:
+            # `web_search` is provided by the host environment and is NOT importable
+            # inside this standalone app process. Import it lazily and bail honestly
+            # if absent, so we never emit a misleading "Found 0 new jobs" for a
+            # search that never actually ran.
             try:
                 from library import web_search
+            except Exception as e:
+                self._logger.warn(f"Web search unavailable in this environment: {e}")
+                return []
+            try:
                 query = f"{skill_str} freelance {platform.lower()}"
                 self._logger.info(f"Web searching: {query}")
                 results = web_search(query, limit=5)

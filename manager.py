@@ -28,6 +28,8 @@ from agents.opportunity_lifecycle import (
     AUTO_APPLY_THRESHOLD,
     OPPORTUNITY_DISCOVERY_INTERVAL
 )
+# Project root (shared constant from base_worker) — used by the real execution engine
+from agents.base_worker import ROOT_FOLDER
 
 # ── Opportunity scheduling ────────────────────────────────────────────────────
 OPPORTUNITY_DISCOVERY_INTERVAL = int(os.getenv("OPPORTUNITY_DISCOVERY_INTERVAL", "5"))  # Every 5 heartbeats
@@ -451,7 +453,7 @@ class ManagerThread(QThread):
         w = info["worker"] if isinstance(info, dict) else self.worker
 
         self._set_worker_busy(worker_name, action)
-        self._communicate("M→A", f"[To {worker_name}] Execute: {action[:80]}")
+        self._communicate("M→A", f"[To {worker_name}] Execute: {action}")
         self._a_think(f"[{worker_name}] Received task: {action}")
 
         # ── STAGE 1+2: THINK + PLAN ───────────────────────────────────────────
@@ -543,7 +545,7 @@ class ManagerThread(QThread):
         status = "DONE" if ok else "NO-OP/FAILED"
         result_text = f"[{status}] {worker_name}: {evidence}"
         self._a_think(f"[{worker_name}] RESULT: {evidence}")
-        self._communicate("A→M", f"[{worker_name}] {evidence[:400]}")
+        self._communicate("A→M", f"[{worker_name}] {evidence}")
         self._set_worker_free(worker_name)
         return result_text
 
@@ -679,7 +681,7 @@ class ManagerThread(QThread):
             f"Prepare a proposal for this gig:\n"
             f"Title: {job.get('title','')}\n"
             f"Budget: ${job.get('budget',0):.0f}\n"
-            f"Description: {job.get('description','')[:300]}\n"
+            f"Description: {job.get('description','')}\n"
             f"Skills: {', '.join(job.get('skills',[]))}"
         )
         self._job_queue.pop(0)
