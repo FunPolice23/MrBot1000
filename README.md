@@ -1,4 +1,4 @@
-# MrBot1000 v2.0.10 — AI-Powered Earning Agent - W.I.P not a final product
+# MrBot1000 v2.0.12 — AI-Powered Earning Agent - W.I.P not a final product
 
 A real-time AI agent system for automated earning opportunity discovery, execution, and lifecycle tracking. Runs entirely locally — no cloud dependencies, no data sharing.
 
@@ -131,7 +131,7 @@ cp .env.example .env
 ```
 
 Key settings:
-- `OLLAMA_MODEL` — Main model for heavy work
+- `OLLAMA_MAIN_MODEL` — Main model for heavy work
 - `OLLAMA_CHAT_MODEL` — Chat model (smaller, faster)
 - `OLLAMA_CHAT_GPU=0` — Chat model runs on CPU (offload from GPU)
 - `PIPELINE_ALLOW_SELF_IMPROVE` — Enable/disable auto code updates

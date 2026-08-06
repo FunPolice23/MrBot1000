@@ -211,7 +211,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("MrBot1000 v2.0.10")
+        self.setWindowTitle("MrBot1000 v2.0.12")
         self.resize(1450, 950)
         self.root_folder  = ROOT_FOLDER
         self._http_workers = []
@@ -512,7 +512,7 @@ class MainWindow(QMainWindow):
         container_layout.setContentsMargins(0, 0, 0, 0)
         container_layout.setSpacing(0)
 
-        title_lbl = QLabel("MrBot1000 v2.0.10")
+        title_lbl = QLabel("MrBot1000 v2.0.12")
         title_lbl.setAlignment(Qt.AlignHCenter | Qt.AlignVCenter)
         title_lbl.setStyleSheet(
             "font-size:15px; font-weight:bold; padding:8px 0px; "
