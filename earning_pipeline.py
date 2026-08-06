@@ -20,7 +20,8 @@ from dataclasses import dataclass, field
 
 from agents.social_earning_platform import SocialEarningPlatform, SocialOpportunity
 from agents.document_scanner import DocumentScanner, QualityController
-from agents.airdrop_scanner import AirdropScanner
+from agents.airdrop_scanner import AirdropScanner, AirdropOpportunity
+from agents.airdrop_claimer import AirdropClaimer
 from agents.defi_scanner import DeFiScanner
 from agents.microtask_client import MicrotaskClient, MicrotaskGig
 from agents.fiverr_client import FiverrClient, FiverrGig
@@ -425,6 +426,46 @@ class EarningPipeline:
                               ) -> Opportunity:
         import httpx
 
+        def _normalize_scores(raw_scores: dict) -> dict:
+            def _to_float(v, default):
+                try:
+                    return float(v)
+                except (TypeError, ValueError):
+                    return float(default)
+
+            return {
+                "profit": _to_float(raw_scores.get("profit", 0.0), 0.0),
+                "effort": _to_float(raw_scores.get("effort", 0.5), 0.5),
+                "risk": _to_float(raw_scores.get("risk", 5.0), 5.0),
+                "urgency": _to_float(raw_scores.get("urgency", 0.0), 0.0),
+                "skill_match": _to_float(raw_scores.get("skill_match", 0.5), 0.5),
+                "scam_prob": _to_float(raw_scores.get("scam_prob", 0.0), 0.0),
+            }
+
+        def _extract_scores(content: str):
+            body = (content or "").strip()
+            if not body:
+                return None
+
+            # First try direct JSON body.
+            try:
+                parsed = json.loads(body)
+                if isinstance(parsed, dict):
+                    return _normalize_scores(parsed)
+            except json.JSONDecodeError:
+                pass
+
+            # Fallback: scan for one valid JSON object in mixed text output.
+            for match in re.finditer(r"\{.*?\}", body, re.DOTALL):
+                fragment = match.group(0)
+                try:
+                    parsed = json.loads(fragment)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(parsed, dict):
+                    return _normalize_scores(parsed)
+            return None
+
         # Check memory first for known patterns
         memory = self.memory.get_opportunity_history(opp.id)
         if memory and "past_decisions" in memory:
@@ -469,11 +510,8 @@ class EarningPipeline:
             data = response.json()
             content = data.get("message", {}).get("content", "")
 
-            json_match = re.search(
-                r"\{.*\}", content, re.DOTALL,
-            )
-            if json_match:
-                scores = json.loads(json_match.group())
+            scores = _extract_scores(content)
+            if scores:
                 opp.skill_match = scores.get("skill_match", 0.5)
                 opp.effort_score = scores.get("effort", 0.5)
                 risk = scores.get("risk", 5)
@@ -482,10 +520,13 @@ class EarningPipeline:
                     else ("medium" if risk >= 4 else "low")
                 )
                 opp.urgency = scores.get("urgency", 0.0)
+                opp.status = "evaluated"
 
                 if scores.get("scam_prob", 0.0) > 0.7:
                     opp.risk_level = "high"
                     opp.status = "rejected"
+            else:
+                raise ValueError("No valid score JSON found in model output")
 
         except Exception as e:
             self._log(f"[Evaluate] LLM error for {opp.id}: {e}")
@@ -613,23 +654,44 @@ class EarningPipeline:
     def _execute_airdrop(self, opp: Opportunity) -> PipelineResult:
         try:
             claimer = AirdropClaimer()
-            result = claimer.claim(opp.url)
-            if result.success:
+            # AirdropClaimer expects an AirdropOpportunity and typically returns bool.
+            # Keep compatibility with older stubbed return objects exposing success/message.
+            claim_target = AirdropOpportunity(
+                id=opp.id,
+                title=opp.title,
+                description=opp.description,
+                platform=opp.platform,
+                token_symbol=opp.payment_currency,
+                estimated_value_usd=opp.estimated_usd_value,
+                risk_level=opp.risk_level or "low",
+                url=opp.url,
+                claim_url=opp.url,
+            )
+            raw_result = claimer.claim(claim_target)
+
+            if isinstance(raw_result, bool):
+                success = raw_result
+                message = "claimed" if success else "claim failed"
+            else:
+                success = bool(getattr(raw_result, "success", False))
+                message = str(getattr(raw_result, "message", "claimed" if success else "claim failed"))
+
+            if success:
                 opp.status = "claimed"
                 opp.outcome = "claimed"
                 self.memory.update_reputation(opp.platform, True)
             else:
                 opp.status = "claim_failed"
-                opp.outcome = result.message
+                opp.outcome = message
                 self.memory.update_reputation(opp.platform, False)
             
-            self.memory.record_outcome(opp.id, "claim", result.message,
-                                       opp.estimated_usd_value, 0.1, result.success)
+            self.memory.record_outcome(opp.id, "claim", message,
+                                       opp.estimated_usd_value, 0.1, success)
             return PipelineResult(
-                success=result.success,
+                success=success,
                 opportunity=opp,
                 action_taken="claim",
-                message=result.message,
+                message=message,
             )
         except Exception as e:
             return PipelineResult(
@@ -724,8 +786,9 @@ class EarningPipeline:
 
         # 4. Execute (only safe actions)
         results = []
+        executable_sources = {"airdrop", "referral", "faucet"}
         for opp in filtered:
-            if opp.source in ["content", "referral", "faucet"]:
+            if opp.source in executable_sources:
                 result = self.execute(opp)
                 results.append(result)
                 self._log(f"Executed {opp.source}: {result.message}")

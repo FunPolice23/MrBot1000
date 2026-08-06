@@ -14,6 +14,7 @@ can understand what the main model decided, and vice versa.
 import json
 import os
 import time
+import threading
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 from datetime import datetime
@@ -69,23 +70,29 @@ class SharedContext:
     
     def __init__(self, path: str = None):
         self._path = Path(path or SHARED_CONTEXT_PATH)
+        self._lock = threading.RLock()
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._ensure_file_exists()
     
     def _ensure_file_exists(self):
-        if not self._path.exists():
-            self._write_state(SharedState())
+        with self._lock:
+            if not self._path.exists():
+                self._write_state(SharedState())
     
     def _read_state(self) -> SharedState:
+        with self._lock:
+            return self._read_state_unlocked()
+
+    def _read_state_unlocked(self) -> SharedState:
         try:
-            with open(self._path, 'r') as f:
+            with open(self._path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
             state = SharedState(version=data.get("version", 1))
             state.last_updated = data.get("last_updated", time.time())
             state.global_tasks = data.get("global_tasks", [])
             state.recent_events = data.get("recent_events", [])
             state.cross_model_signals = data.get("cross_model_signals", [])
-            
+
             for name, ctx_data in data.get("models", {}).items():
                 state.models[name] = ModelContext(
                     model_name=ctx_data.get("model_name", name),
@@ -101,36 +108,46 @@ class SharedContext:
             return SharedState()
     
     def _write_state(self, state: SharedState):
+        with self._lock:
+            self._write_state_unlocked(state)
+
+    def _write_state_unlocked(self, state: SharedState):
         state.last_updated = time.time()
-        with open(self._path, 'w') as f:
-            json.dump(state.to_dict(), f, indent=2)
+        payload = json.dumps(state.to_dict(), indent=2)
+        tmp_path = self._path.with_suffix(self._path.suffix + ".tmp")
+        with open(tmp_path, 'w', encoding='utf-8') as f:
+            f.write(payload)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, self._path)
     
     # ── Model Context Management ───────────────────────────────────────
     
     def update_model_context(self, model_name: str, **kwargs):
         """Update context for a specific model"""
-        state = self._read_state()
-        
-        if model_name not in state.models:
-            state.models[model_name] = ModelContext(model_name=model_name)
-        
-        ctx = state.models[model_name]
-        ctx.model_name = model_name
-        ctx.timestamp = time.time()
-        
-        for key, value in kwargs.items():
-            if hasattr(ctx, key):
-                current = getattr(ctx, key)
-                if isinstance(current, list) and isinstance(value, list):
-                    current.extend(value)
-                    setattr(ctx, key, current)
-                elif isinstance(current, dict) and isinstance(value, dict):
-                    current.update(value)
-                    setattr(ctx, key, current)
-                else:
-                    setattr(ctx, key, value)
-        
-        self._write_state(state)
+        with self._lock:
+            state = self._read_state_unlocked()
+
+            if model_name not in state.models:
+                state.models[model_name] = ModelContext(model_name=model_name)
+
+            ctx = state.models[model_name]
+            ctx.model_name = model_name
+            ctx.timestamp = time.time()
+
+            for key, value in kwargs.items():
+                if hasattr(ctx, key):
+                    current = getattr(ctx, key)
+                    if isinstance(current, list) and isinstance(value, list):
+                        current.extend(value)
+                        setattr(ctx, key, current)
+                    elif isinstance(current, dict) and isinstance(value, dict):
+                        current.update(value)
+                        setattr(ctx, key, current)
+                    else:
+                        setattr(ctx, key, value)
+
+            self._write_state_unlocked(state)
     
     def get_model_context(self, model_name: str) -> Optional[ModelContext]:
         """Get context for a specific model"""
@@ -146,18 +163,19 @@ class SharedContext:
     
     def add_global_task(self, task: str, assignee: str = None, priority: int = 5):
         """Add a cross-model task"""
-        state = self._read_state()
-        task_obj = {
-            "id": f"task_{int(time.time()*1000)}",
-            "task": task,
-            "assignee": assignee,
-            "priority": priority,
-            "created": time.time(),
-            "status": "pending"
-        }
-        state.global_tasks.append(task_obj)
-        self._write_state(state)
-        return task_obj["id"]
+        with self._lock:
+            state = self._read_state_unlocked()
+            task_obj = {
+                "id": f"task_{int(time.time()*1000)}",
+                "task": task,
+                "assignee": assignee,
+                "priority": priority,
+                "created": time.time(),
+                "status": "pending"
+            }
+            state.global_tasks.append(task_obj)
+            self._write_state_unlocked(state)
+            return task_obj["id"]
     
     def get_pending_tasks(self, model_name: str = None) -> List[Dict]:
         """Get pending tasks for a model or all pending tasks"""
@@ -169,41 +187,44 @@ class SharedContext:
     
     def complete_task(self, task_id: str, result: str = ""):
         """Mark a task as completed"""
-        state = self._read_state()
-        for task in state.global_tasks:
-            if task["id"] == task_id:
-                task["status"] = "completed"
-                task["result"] = result
-                task["completed"] = time.time()
-                break
-        self._write_state(state)
+        with self._lock:
+            state = self._read_state_unlocked()
+            for task in state.global_tasks:
+                if task["id"] == task_id:
+                    task["status"] = "completed"
+                    task["result"] = result
+                    task["completed"] = time.time()
+                    break
+            self._write_state_unlocked(state)
     
     # ── Event & Signal System ────────────────────────────────────────────
     
     def add_event(self, event_type: str, source: str, data: dict):
         """Log a cross-model event"""
-        state = self._read_state()
-        event = {
-            "type": event_type,
-            "source": source,
-            "data": data,
-            "timestamp": time.time()
-        }
-        state.recent_events.append(event)
-        self._write_state(state)
+        with self._lock:
+            state = self._read_state_unlocked()
+            event = {
+                "type": event_type,
+                "source": source,
+                "data": data,
+                "timestamp": time.time()
+            }
+            state.recent_events.append(event)
+            self._write_state_unlocked(state)
     
     def add_signal(self, from_model: str, to_model: str, message: str, data: dict = None):
         """Send a signal from one model to another"""
-        state = self._read_state()
-        signal = {
-            "from": from_model,
-            "to": to_model,
-            "message": message,
-            "data": data or {},
-            "timestamp": time.time()
-        }
-        state.cross_model_signals.append(signal)
-        self._write_state(state)
+        with self._lock:
+            state = self._read_state_unlocked()
+            signal = {
+                "from": from_model,
+                "to": to_model,
+                "message": message,
+                "data": data or {},
+                "timestamp": time.time()
+            }
+            state.cross_model_signals.append(signal)
+            self._write_state_unlocked(state)
     
     def get_signals(self, model_name: str, limit: int = 10) -> List[Dict]:
         """Get signals intended for a model"""
@@ -216,42 +237,44 @@ class SharedContext:
                                       status: str = "active", last_amount: float = 0.0,
                                       note: str = "") -> Dict[str, Any]:
         """Persist a lifecycle snapshot for an opportunity in shared context."""
-        state = self._read_state()
-        snapshot = {
-            "opportunity_id": opportunity_id,
-            "current_stage": current_stage,
-            "status": status,
-            "last_amount": last_amount,
-            "note": note,
-            "timestamp": time.time(),
-        }
-        state.recent_events.append({
-            "type": "opportunity_lifecycle",
-            "source": "shared_context",
-            "data": snapshot,
-            "timestamp": snapshot["timestamp"],
-        })
-        self._write_state(state)
-        return snapshot
+        with self._lock:
+            state = self._read_state_unlocked()
+            snapshot = {
+                "opportunity_id": opportunity_id,
+                "current_stage": current_stage,
+                "status": status,
+                "last_amount": last_amount,
+                "note": note,
+                "timestamp": time.time(),
+            }
+            state.recent_events.append({
+                "type": "opportunity_lifecycle",
+                "source": "shared_context",
+                "data": snapshot,
+                "timestamp": snapshot["timestamp"],
+            })
+            self._write_state_unlocked(state)
+            return snapshot
 
     def update_research_snapshot(self, research: Dict[str, Any]) -> Dict[str, Any]:
         """Persist a compact research snapshot so both models can reuse it."""
-        state = self._read_state()
-        payload = {
-            "research_path": research.get("research_path"),
-            "research_file_count": research.get("research_file_count", 0),
-            "root_excerpt": (research.get("root") or "")[:4000],
-            "research_excerpt": (research.get("research") or "")[:4000],
-            "timestamp": time.time(),
-        }
-        state.recent_events.append({
-            "type": "research_snapshot",
-            "source": "shared_context",
-            "data": payload,
-            "timestamp": payload["timestamp"],
-        })
-        self._write_state(state)
-        return payload
+        with self._lock:
+            state = self._read_state_unlocked()
+            payload = {
+                "research_path": research.get("research_path"),
+                "research_file_count": research.get("research_file_count", 0),
+                "root_excerpt": (research.get("root") or "")[:4000],
+                "research_excerpt": (research.get("research") or "")[:4000],
+                "timestamp": time.time(),
+            }
+            state.recent_events.append({
+                "type": "research_snapshot",
+                "source": "shared_context",
+                "data": payload,
+                "timestamp": payload["timestamp"],
+            })
+            self._write_state_unlocked(state)
+            return payload
 
     def get_latest_research_snapshot(self) -> Optional[Dict[str, Any]]:
         """Return the latest shared research snapshot, if available."""

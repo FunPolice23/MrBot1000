@@ -2,6 +2,7 @@ import os
 import sys
 import tempfile
 import unittest
+import threading
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -31,6 +32,35 @@ class TestSharedResearchContext(unittest.TestCase):
                 self.assertIn("use this context", runtime_context)
             finally:
                 os.environ.pop("SHARED_CONTEXT_PATH", None)
+
+    def test_shared_context_concurrent_writes_preserve_json(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            context_path = str(Path(tmpdir) / "shared_context.json")
+            shared_context = SharedContext(context_path)
+
+            def writer(idx: int):
+                for step in range(25):
+                    shared_context.update_model_context(
+                        f"model_{idx}",
+                        current_task=f"task_{idx}_{step}",
+                        reasoning_chain=[f"reason_{idx}_{step}"],
+                    )
+                    shared_context.add_event(
+                        event_type="concurrency_test",
+                        source=f"writer_{idx}",
+                        data={"step": step},
+                    )
+
+            threads = [threading.Thread(target=writer, args=(i,)) for i in range(6)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+
+            state = shared_context._read_state()
+            self.assertGreaterEqual(len(state.models), 6)
+            self.assertGreater(len(state.recent_events), 0)
+            self.assertLessEqual(len(state.recent_events), 100)
 
 
 if __name__ == "__main__":

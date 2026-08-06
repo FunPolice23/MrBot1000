@@ -31,7 +31,6 @@ SECURITY:
 import sys
 import os
 import json
-import re
 import urllib.request
 sys.path.insert(0, os.path.dirname(__file__))
 import time
@@ -43,7 +42,6 @@ from agents.base_worker import WorkerAgent, ROOT_FOLDER
 from agents.summarizer import SummarizerThread
 from manager import ManagerThread
 from database import AgentDB
-from startup_validation import validate_startup_environment
 from ui import (
         AgentSprite, QuadThoughtPanel, AgentsTab
     )
@@ -53,32 +51,12 @@ from PySide6.QtWidgets import (
     QLineEdit, QLabel, QComboBox, QHBoxLayout, QTreeView, QFileSystemModel,
     QPlainTextEdit, QDialog, QFileDialog, QListWidget, QProgressBar,
     QSpinBox, QCheckBox, QGroupBox, QFormLayout, QMessageBox, QScrollArea,
-    QGridLayout, QColorDialog
+    QGridLayout
 )
 from PySide6.QtGui import QColor, QPalette
 from PySide6.QtCore import QThread, Signal, QTimer, Qt
 from dotenv import load_dotenv, set_key
-from theme_config import resolve_theme_definition, save_custom_theme, CUSTOM_THEME_KEYS
 load_dotenv(dotenv_path=Path(__file__).with_name(".env"), override=True)
-
-
-def _parse_cli_overrides(argv):
-    """Accept -sm/--safe-mode and MRBOT_SAFE_MODE=... style overrides."""
-    cleaned = [argv[0]]
-    safe_mode = False
-    for arg in argv[1:]:
-        if arg in {"-sm", "--safe-mode"}:
-            safe_mode = True
-        elif arg.startswith("MRBOT_SAFE_MODE="):
-            safe_mode = str(arg.split("=", 1)[1]).lower() in {"1", "true", "yes", "on"}
-            os.environ["MRBOT_SAFE_MODE"] = "true" if safe_mode else "false"
-        else:
-            cleaned.append(arg)
-    if safe_mode:
-        os.environ["MRBOT_SAFE_MODE"] = "true"
-    return cleaned, safe_mode
-
-
 try:
     import openai
     OPENAI_AVAILABLE = True
@@ -181,21 +159,47 @@ class MainWindow(QMainWindow):
 
     THEMES = {
         "Auto": None,
-        "Dark": {},
-        "Light": {},
-        "Midnight-Blue": {},
-        "Ocean": {},
-        "Solar": {},
-        "Forest": {},
-        "Rose": {},
-        "Lavender": {},
-        "Neon-Cyberpunk": {},
-        "Gradient-Mix": {},
-        "Custom": {},
+        "Dark": {
+            "bg": "#121212", "fg": "#e0e0e0",
+            "accent": "#bb86fc", "disabled": "#555", "highlight": "#03dac6",
+            "qss_extra": (
+                "QProgressBar::chunk{background:qlineargradient("
+                "x1:0,y1:0,x2:1,y2:0,stop:0 #bb86fc,stop:1 #03dac6);}"
+            )
+        },
+        "Light": {
+            "bg": "#f5f5f5", "fg": "#212121",
+            "accent": "#6200ee", "disabled": "#aaaaaa",
+            "highlight": "#3700b3", "qss_extra": ""
+        },
+        "Neon-Cyberpunk": {
+            "bg": "#0d001a", "fg": "#00ffea",
+            "accent": "#ff00aa", "disabled": "#444", "highlight": "#ffea00",
+            "qss_extra": (
+                "*{font-family:'Consolas',monospace;}"
+                "QPushButton{border:1px solid #ff00aa;"
+                "background:#1a0033;color:#00ffea;}"
+                "QPushButton:hover{background:#ff00aa;color:black;}"
+                "QProgressBar::chunk{background:#ff00aa;}"
+            )
+        },
+        "Gradient-Mix": {
+            "bg": "#1e0033", "fg": "#d4a5ff",
+            "accent": "#ff6ec7", "disabled": "#663399", "highlight": "#00f2ff",
+            "qss_extra": (
+                "QWidget{background:qlineargradient("
+                "x1:0,y1:0,x2:1,y2:1,stop:0 #1e0033,stop:1 #330066);}"
+                "QLabel{color:#d4a5ff;}"
+                "QProgressBar{background:#330066;border:1px solid #ff6ec7;}"
+                "QProgressBar::chunk{background:qlineargradient("
+                "x1:0,y1:0,x2:1,y2:0,stop:0 #ff6ec7,stop:1 #00f2ff);}"
+            )
+        },
     }
 
     def __init__(self):
         super().__init__()
+        self.setWindowTitle("MrBot1000 Agents v10 — Extended")
         self.resize(1450, 950)
         self.root_folder  = ROOT_FOLDER
         self._http_workers = []
@@ -203,34 +207,22 @@ class MainWindow(QMainWindow):
 
         self.db = AgentDB()
 
-        startup_report = validate_startup_environment(log_fn=self.log_signal.emit)
-        self.startup_report = startup_report
-        self._safe_mode = bool(startup_report.safe_mode or os.getenv("MRBOT_SAFE_MODE", "").lower() in {"1", "true", "yes", "on"})
-        self._refresh_window_title()
-
         # ── Action Pipeline ───────────────────────────────────────────────────
         from action_pipeline import ActionPipeline, AgentCollaboration
         self.pipeline = ActionPipeline(
             root_folder=ROOT_FOLDER,
             db=self.db,
-            log_fn=lambda msg: self.log_signal.emit(msg),
-            safe_mode=self._safe_mode
+            log_fn=lambda msg: self.log_signal.emit(msg)
         )
         self.pipeline.on_validated = self._on_pipeline_validated
         self.pipeline.on_executed  = self._on_pipeline_executed
         self.pipeline.on_rejected  = self._on_pipeline_rejected
 
         ollama_chat  = os.getenv("OLLAMA_CHAT_MODEL", "").strip() or None
-        ollama_main  = os.getenv("OLLAMA_MAIN_MODEL", "").strip() or None
         self.log_signal.emit(f"[Startup] OLLAMA_CHAT_MODEL from env: {ollama_chat}")
-        self.log_signal.emit(f"[Startup] OLLAMA_MAIN_MODEL from env: {ollama_main}")
-        self.log_signal.emit(f"[Startup] validation status={startup_report.status} safe_mode={startup_report.safe_mode}")
-        if self._safe_mode:
-            self.log_signal.emit("[Startup] SAFE MODE active: real file-changing actions will be skipped")
         api_key      = os.getenv("OPENAI_API_KEY", "") or os.getenv("ANTHROPIC_API_KEY", "")
         self.worker  = WorkerAgent(api_key, self.log_signal, db=self.db,
-                                   chat_ollama_model=ollama_chat,
-                                   primary_ollama_model=ollama_main)  # Main model for tasks
+                                   chat_ollama_model=ollama_chat)
         self.manager = ManagerThread(api_key, self.worker, db=self.db)
         self.summarizer = SummarizerThread(self.worker, db=self.db)
         self.manager.set_summarizer(self.summarizer)  # Connect summarizer to manager
@@ -273,7 +265,7 @@ class MainWindow(QMainWindow):
 
         # Create UI first, then start threads
         self.create_ui()
-        self.apply_theme(os.getenv("MRBOT_THEME_NAME", "Dark"))
+        self.apply_theme("Dark")
 
         self.summarizer.start()
         self.manager.start()
@@ -306,9 +298,6 @@ class MainWindow(QMainWindow):
         for t in self.THEMES:
             act = theme_menu.addAction(t)
             act.triggered.connect(lambda _, tn=t: self.apply_theme(tn))
-        theme_menu.addSeparator()
-        custom_theme_action = theme_menu.addAction("Customize Theme...")
-        custom_theme_action.triggered.connect(self._open_custom_theme_dialog)
 
         self.thought_panel = QuadThoughtPanel(self)
         self.thought_panel.hide()
@@ -324,57 +313,25 @@ class MainWindow(QMainWindow):
 
         QTimer.singleShot(600, self.refresh_db_stats)
 
-    def shutdown(self):
-        if getattr(self, "_shutting_down", False):
-            return
-        self._shutting_down = True
-
+    def closeEvent(self, event):
         try:
             self._shutdown_ollama()
         except Exception:
             pass
-
-        for component in (getattr(self, "manager", None), getattr(self, "summarizer", None)):
-            if component is None:
-                continue
-            try:
-                component.stop()
-            except Exception:
-                pass
-
-        for component in (getattr(self, "manager", None), getattr(self, "summarizer", None)):
-            if component is None:
-                continue
-            try:
-                component.wait(5000)
-            except Exception:
-                pass
-
-        for component in (getattr(self, "manager", None), getattr(self, "summarizer", None)):
-            if component is None:
-                continue
-            try:
-                if component.isRunning():
-                    component.terminate()
-            except Exception:
-                pass
-
-        db = getattr(self, "db", None)
-        if db is not None:
-            try:
-                db.close()
-            except Exception:
-                pass
-
-    def closeEvent(self, event):
-        self.shutdown()
+        self.manager.stop()
+        self.manager.wait(2000)
+        self.summarizer.stop()
+        self.summarizer.wait(2000)
+        if self.manager.isRunning():
+            self.manager.terminate()
+        self.db.close()
         super().closeEvent(event)
 
     def _shutdown_ollama(self):
         if not OLLAMA_AVAILABLE or not ollama:
             return
         try:
-            main_model = os.getenv("OLLAMA_MAIN_MODEL", "").strip() or os.getenv("OLLAMA_MODEL", "").strip()
+            main_model = os.getenv("OLLAMA_MODEL", "").strip()
             chat_model = os.getenv("OLLAMA_CHAT_MODEL", "").strip()
             for model in {main_model, chat_model}:
                 if not model:
@@ -424,8 +381,16 @@ class MainWindow(QMainWindow):
         self.thought_panel.route("Comms", text, direction)
 
     def _on_chat_reply(self, trigger: str, text: str):
-        if hasattr(self, "agents_tab") and hasattr(self.agents_tab, "append_reply"):
-            self.agents_tab.append_reply("Manager", f"[{trigger}] {text}")
+            # Filter out heartbeat and task messages from chat window
+            # These should go to notifications/subtle status, not chat
+            if trigger.startswith("Heartbeat:") or trigger.startswith("Task:"):
+                # Heartbeat/task decisions - update status, don't clutter chat
+                if hasattr(self, 'agent_status_label'):
+                    self.agent_status_label.setText(f"Action: {trigger[:40]}...")
+                return
+        
+            if hasattr(self, "agents_tab") and hasattr(self.agents_tab, "append_reply"):
+                self.agents_tab.append_reply("Manager", f"[{trigger}] {text}")
 
     def _on_manager_thought(self, text: str):
         self.thought_panel.route("Manager", text)
@@ -709,20 +674,6 @@ class MainWindow(QMainWindow):
 
         lay.addWidget(research_group)
 
-        research_snapshot_group = QGroupBox("Research Snapshot")
-        research_snapshot_layout = QVBoxLayout(research_snapshot_group)
-        research_snapshot_layout.setContentsMargins(12, 12, 12, 12)
-        research_snapshot_layout.setSpacing(8)
-        self.research_snapshot_edit = QPlainTextEdit()
-        self.research_snapshot_edit.setReadOnly(True)
-        self.research_snapshot_edit.setPlainText("No research scan yet. Select a folder or run a re-scan.")
-        self.research_snapshot_edit.setStyleSheet(
-            "font-family:Consolas,Monaco,monospace;font-size:11px;"
-            "background:#0a0a0f;color:#d4d4d4;"
-        )
-        research_snapshot_layout.addWidget(self.research_snapshot_edit)
-        lay.addWidget(research_snapshot_group)
-
         lay.addStretch()
         return w
 
@@ -740,8 +691,8 @@ class MainWindow(QMainWindow):
         rl = QFormLayout(rg)
         rl.setContentsMargins(12, 12, 12, 12)
         rl.setVerticalSpacing(8)
-        self.name_edit   = QLineEdit(os.getenv("AGENT_NAME", ""))
-        self.user_edit   = QLineEdit(os.getenv("AGENT_USERNAME", ""))
+        self.name_edit   = QLineEdit(os.getenv("AGENT_NAME", "CodeSelfLearnBot"))
+        self.user_edit   = QLineEdit(os.getenv("AGENT_USERNAME", "codeselflearn-2026"))
         self.wallet_edit = QLineEdit(os.getenv("ATOMIC_SOLANA_ADDRESS", ""))
         self.cashapp_edit = QLineEdit(os.getenv("CASHAPP_TAG", ""))
         rl.addRow("Agent Name:",    self.name_edit)
@@ -987,7 +938,7 @@ class MainWindow(QMainWindow):
         payl = QFormLayout(payg)
         payl.setContentsMargins(12, 12, 12, 12)
         payl.setVerticalSpacing(8)
-        self.cashapp_edit = QLineEdit(os.getenv("CASHAPP_TAG", ""))
+        self.cashapp_edit = QLineEdit(os.getenv("CASHAPP_TAG", "$csmith7899"))
         payl.addRow("Cash App tag:", self.cashapp_edit)
         self.solana_payout_edit = QLineEdit(
             os.getenv("ATOMIC_SOLANA_ADDRESS", ""))
@@ -999,7 +950,7 @@ class MainWindow(QMainWindow):
         lay.addWidget(payg)
 
         # Appearance
-        apg = QGroupBox("Appearance & Assistant Preferences")
+        apg = QGroupBox("Appearance")
         apl = QFormLayout(apg)
         apl.setContentsMargins(12, 12, 12, 12)
         apl.setVerticalSpacing(8)
@@ -1008,15 +959,6 @@ class MainWindow(QMainWindow):
         theme_combo.setCurrentText("Dark")
         theme_combo.currentTextChanged.connect(self.apply_theme)
         apl.addRow("Theme:", theme_combo)
-
-        self.status_format_check = QCheckBox("Use compact lifecycle status reports")
-        self.status_format_check.setChecked(os.getenv("COMPACT_STATUS_REPORTS", "true").lower() == "true")
-        apl.addRow(self.status_format_check)
-
-        status_format_note = QLabel("Show opportunity updates as concise status summaries instead of raw JSON payloads.")
-        status_format_note.setStyleSheet("color:#888;font-size:10px;")
-        status_format_note.setWordWrap(True)
-        apl.addRow(status_format_note)
         lay.addWidget(apg)
 
         # Cache Management
@@ -1222,56 +1164,6 @@ class MainWindow(QMainWindow):
 
         return w
 
-    def _build_research_snapshot(self, research: dict) -> str:
-        if not research:
-            return "No research data available yet."
-
-        folder = research.get("research_path") or "(not set)"
-        file_count = int(research.get("research_file_count") or 0)
-        research_text = research.get("research", "")
-        root_text = research.get("root", "")
-
-        files = []
-        for match in re.findall(r"\[([^\]]+)\]", research_text):
-            if match.startswith("ROOT/"):
-                continue
-            if match.startswith("research folder") or match.startswith("path does not exist"):
-                continue
-            if match not in files:
-                files.append(match)
-
-        ext_counts = {}
-        for name in files:
-            ext = Path(name).suffix.lower() or "(no ext)"
-            ext_counts[ext] = ext_counts.get(ext, 0) + 1
-
-        ext_summary = ", ".join(f"{ext}({count})" for ext, count in sorted(ext_counts.items())[:6]) or "none"
-        preview = ", ".join(files[:10]) if files else "(no readable files found)"
-        root_hint = "root files present" if root_text and "(no .py files found" not in root_text else "no root python files found"
-
-        return "\n".join([
-            f"Folder: {folder}",
-            f"Files scanned: {file_count}",
-            f"File types: {ext_summary}",
-            f"Preview: {preview}",
-            f"Root context: {root_hint}",
-            "",
-            "Tip: use this snapshot to judge whether the selected folder provides enough context for the manager.",
-        ])
-
-    def _refresh_research_snapshot(self):
-        try:
-            research = self.worker.research_all()
-            if self.research_folder_label is not None:
-                self.research_folder_label.setText(
-                    f"Research folder: {research.get('research_path') or 'not set'}"
-                )
-            if hasattr(self, "research_snapshot_edit"):
-                self.research_snapshot_edit.setPlainText(self._build_research_snapshot(research))
-        except Exception as exc:
-            if hasattr(self, "research_snapshot_edit"):
-                self.research_snapshot_edit.setPlainText(f"Research error: {exc}")
-
     def select_research_folder(self):
         folder = QFileDialog.getExistingDirectory(
             self, "Select Research Folder")
@@ -1283,7 +1175,6 @@ class MainWindow(QMainWindow):
                 "System", f"Research folder set: {folder}")
             self.manager.invalidate_cache()
             self.manager._reviewed_files.clear()
-            self._refresh_research_snapshot()
 
     def force_safe_improve(self):
         self.manager.queue_task(
@@ -1294,7 +1185,6 @@ class MainWindow(QMainWindow):
         self.manager.invalidate_cache()
         self.manager.queue_task(
             "Research re-scan: review all files and summarize key findings")
-        self._refresh_research_snapshot()
         self.log_signal.emit("Research re-scan queued")
 
     def clear_file_cache(self):
@@ -1317,10 +1207,7 @@ class MainWindow(QMainWindow):
                 f"Chars: {int(stats.get('total_chars') or 0):,}"
             )
             self.db_actions_list.clear()
-            recent_actions = self.db.get_recent_actions(20)
-            if not recent_actions:
-                self.db_actions_list.addItem("(no recent actions)")
-            for a in recent_actions:
+            for a in self.db.get_recent_actions(20):
                 ts = self.db.ts_to_str(a["ts"])
                 self.db_actions_list.addItem(
                     f"[{ts}] {a['trigger']}: {a['action_text'][:80]}")
@@ -1332,7 +1219,7 @@ class MainWindow(QMainWindow):
                     f"[{ts}] {str(c['provider']):6} "
                     f"{str(c['model'])[:24]:24} "
                     f"{str(c['latency_ms'] or 0):>5}ms {status}")
-            self.db_calls_edit.setPlainText("\n".join(lines) if lines else "(no LLM calls logged yet)")
+            self.db_calls_edit.setPlainText("\n".join(lines))
         except Exception as e:
             self.db_stats_label.setText(f"DB error: {e}")
 
@@ -1640,11 +1527,8 @@ class MainWindow(QMainWindow):
         set_key(env, "OPENAI_MODEL",        self.openai_model_edit.text())
         set_key(env, "ANTHROPIC_API_KEY",   self.anthropic_key_edit.text())
         set_key(env, "ANTHROPIC_MODEL",     self.anthropic_model_edit.text())
-        main_model = self.ollama_model_combo.currentText().strip()
-        chat_model = self.ollama_chat_model_combo.currentText().strip()
-        set_key(env, "OLLAMA_MODEL",        main_model)
-        set_key(env, "OLLAMA_MAIN_MODEL",   main_model)
-        set_key(env, "OLLAMA_CHAT_MODEL",   chat_model)
+        set_key(env, "OLLAMA_MODEL",        self.ollama_model_combo.currentText())
+        set_key(env, "OLLAMA_CHAT_MODEL",   self.ollama_chat_model_combo.currentText().strip())
         set_key(env, "DISABLE_OPENAI",      str(self.disable_openai.isChecked()))
         set_key(env, "DISABLE_ANTHROPIC",   str(self.disable_anthropic.isChecked()))
         set_key(env, "DISABLE_OLLAMA",      str(self.disable_ollama.isChecked()))
@@ -1666,8 +1550,6 @@ class MainWindow(QMainWindow):
         set_key(env, "PIPELINE_ALLOW_WRITE", str(self.pipeline_allow_write_check.isChecked()))
         set_key(env, "PIPELINE_ALLOW_SELF_IMPROVE",
                 str(self.pipeline_allow_selfimprove_check.isChecked()))
-        set_key(env, "COMPACT_STATUS_REPORTS",
-                str(getattr(self, "status_format_check", None).isChecked() if hasattr(self, "status_format_check") else True))
 
         # Reload env so newly saved keys are visible to os.getenv() in this process
         try:
@@ -1677,9 +1559,6 @@ class MainWindow(QMainWindow):
 
         # Update live objects
         self.worker.max_file_size = self.max_file_spin.value() * 1024 * 1024
-        # Update live model routing without requiring app restart.
-        self.worker._ollama_model_override = main_model or None
-        self.worker._chat_ollama_model_override = chat_model or None
         self.manager.HEARTBEAT_INTERVAL = self.polling_spin.value()
         self.manager._research_cache_ttl = self.research_cache_ttl_spin.value()
         if hasattr(self, "agents_tab"):
@@ -1738,25 +1617,15 @@ class MainWindow(QMainWindow):
                        .palette().color(QPalette.Window).lightness() < 128)
             self.apply_theme("Dark" if is_dark else "Light")
             return
-        theme = resolve_theme_definition(theme_name)
-        self._current_theme_name = theme_name
-        self._current_theme = theme
-        os.environ["MRBOT_THEME_NAME"] = theme_name
-        if theme_name != "Custom":
-            os.environ.pop("MRBOT_THEME_BG", None)
-            os.environ.pop("MRBOT_THEME_PANEL", None)
-            os.environ.pop("MRBOT_THEME_FG", None)
-            os.environ.pop("MRBOT_THEME_ACCENT", None)
-            os.environ.pop("MRBOT_THEME_HIGHLIGHT", None)
-            os.environ.pop("MRBOT_THEME_DISABLED", None)
+        theme = self.THEMES.get(theme_name, self.THEMES["Dark"])
         pal = QPalette()
         for role, key in [
             (QPalette.Window,        "bg"),
             (QPalette.WindowText,    "fg"),
-            (QPalette.Base,          "panel"),
-            (QPalette.AlternateBase, "panel"),
+            (QPalette.Base,          "bg"),
+            (QPalette.AlternateBase, "bg"),
             (QPalette.Text,          "fg"),
-            (QPalette.Button,        "panel"),
+            (QPalette.Button,        "bg"),
             (QPalette.ButtonText,    "fg"),
             (QPalette.Highlight,     "highlight"),
         ]:
@@ -1770,18 +1639,18 @@ class MainWindow(QMainWindow):
         qss = f"""
             QWidget{{background:{theme['bg']};color:{theme['fg']};}}
             QTabWidget::pane{{border:1px solid {theme['accent']};
-                background:{theme['panel']};}}
-            QTabBar::tab{{background:{theme['panel']};color:{theme['fg']};
+                background:{theme['bg']};}}
+            QTabBar::tab{{background:{theme['bg']};color:{theme['fg']};
                 padding:8px;}}
             QTabBar::tab:selected{{background:{theme['accent']};color:black;}}
-            QPushButton{{background:{theme['panel']};color:{theme['fg']};
+            QPushButton{{background:{theme['bg']};color:{theme['fg']};
                 border:1px solid {theme['accent']};padding:6px;
                 border-radius:4px;}}
             QPushButton:hover{{background:{theme['accent']};color:black;}}
             QPushButton:checked{{background:{theme['highlight']};color:black;}}
             QLineEdit,QPlainTextEdit,QSpinBox,QComboBox{{
-                background:{theme['panel']};color:{theme['fg']};
-                border:1px solid {theme['accent']};}}
+                background:{theme['bg']};color:{theme['fg']};
+                border:1px solid {theme['highlight']};}}
             QGroupBox{{border:1px solid {theme['accent']};border-radius:4px;
                 margin-top:8px;padding-top:8px;}}
             QGroupBox::title{{color:{theme['accent']};}}
@@ -1790,65 +1659,6 @@ class MainWindow(QMainWindow):
         """
         app.setStyleSheet(qss)
         self.log_signal.emit(f"Theme: {theme_name}")
-
-    def _open_custom_theme_dialog(self):
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Customize Theme")
-        dialog.resize(520, 260)
-        layout = QVBoxLayout(dialog)
-        form = QFormLayout()
-        pickers = {}
-        for key in CUSTOM_THEME_KEYS:
-            button = QPushButton("Choose")
-            button.setObjectName(key)
-            label = QLabel("")
-            label.setFixedWidth(90)
-            row = QHBoxLayout()
-            row.addWidget(label)
-            row.addWidget(button)
-            form.addRow(f"{key.title()}:", row)
-            pickers[key] = (label, button)
-        layout.addLayout(form)
-        buttons = QHBoxLayout()
-        save_btn = QPushButton("Save")
-        cancel_btn = QPushButton("Cancel")
-        buttons.addStretch()
-        buttons.addWidget(save_btn)
-        buttons.addWidget(cancel_btn)
-        layout.addLayout(buttons)
-
-        current = resolve_theme_definition("Custom")
-        for key, (label, button) in pickers.items():
-            color = current.get(key, "#ffffff")
-            label.setText(color)
-            label.setStyleSheet(f"background:{color};color:{color};")
-            button.clicked.connect(lambda _, k=key, lbl=label: self._pick_color(k, lbl))
-
-        def save_and_close():
-            values = {}
-            for key, (label, _) in pickers.items():
-                values[key] = label.text().strip() or "#ffffff"
-            save_custom_theme(values)
-            self.apply_theme("Custom")
-            dialog.accept()
-
-        save_btn.clicked.connect(save_and_close)
-        cancel_btn.clicked.connect(dialog.reject)
-        dialog.exec()
-
-    def _pick_color(self, key: str, label: QLabel):
-        current = QColor(label.text().strip() or "#ffffff")
-        color = QColorDialog.getColor(current, self, f"Choose {key.title()} color")
-        if color.isValid():
-            label.setText(color.name())
-            label.setStyleSheet(f"background:{color.name()};color:{color.name()};")
-
-    def _refresh_window_title(self):
-        base_title = "MrBot1000 Agents v10 — Extended"
-        if getattr(self, "_safe_mode", False):
-            self.setWindowTitle(f"{base_title} | SAFE-MODE")
-        else:
-            self.setWindowTitle(base_title)
 
     def _summarizer_human_send(self, text: str):
         self.summarizer.send_human_message(text)
@@ -1892,7 +1702,6 @@ class MainWindow(QMainWindow):
 if __name__ == "__main__":
     import traceback
     try:
-        sys.argv, _ = _parse_cli_overrides(sys.argv)
         app = QApplication(sys.argv)
         app.setStyle("Fusion")
         window = MainWindow()

@@ -6,7 +6,7 @@ Specialization: finding, evaluating, and queuing freelance gigs.
 Targets platforms like Reddit, Fiverr, Upwork, and social platforms.
 The worker:
   1. Builds search queries from team skill profile
-  2. Calls the LLM to generate simulated/reasoned job listings (when no live API)
+  2. Uses real platform clients (Fiverr RSS, Upwork API, web search)
   3. Evaluates each listing against team capabilities
   4. Scores and queues promising jobs for the Manager to assign
   5. Tracks applied/rejected/pending jobs in its own SQLite table
@@ -215,10 +215,13 @@ class JobSearchWorker(WorkerAgent):
 
     SEARCH_SYSTEM = (
         "You are a freelance job search expert specializing in AI agent gigs. "
-        "Generate realistic, detailed job listings for the given platform and skills. "
-        "Return ONLY a JSON array of job objects. "
-        "Each job must have: title, description, budget_usd, required_skills, url. "
-        "Make budgets realistic ($50-$2000 range). No markdown fences. No other text."
+        "NOTE: You do NOT invent listings. Real gigs come from the live platform "
+        "clients (Fiverr RSS, Upwork API) or web search. If asked to 'search', "
+        "report what the real clients returned. ClawGig, ClerkGig, uGig and "
+        "Moltbook are DISABLED and must never be targeted. "
+        "When you must summarize found gigs, return ONLY a JSON array of job "
+        "objects with: title, description, budget_usd, required_skills, url. "
+        "No markdown fences. No other text."
     )
 
     EVAL_SYSTEM = (
@@ -237,6 +240,15 @@ class JobSearchWorker(WorkerAgent):
         "PeerTask":   {"url": "https://peertask.io", "speciality": "coding, data, web scraping"},
         "Social":     {"url": "social platforms", "speciality": "micro-jobs, quick tasks"},
     }
+
+    # Excluded/broken platforms - NEVER SEARCH THESE
+    EXCLUDED_PLATFORMS = {
+        "ClawGig", "ClerkGig", "Clawgig", "TempDisabled", "Maintenance"
+    }
+
+    # Active platforms definition
+    ACTIVE_PLATFORMS = PLATFORMS
+
 
     # Team's known skill set
     TEAM_SKILLS = [
@@ -261,55 +273,113 @@ class JobSearchWorker(WorkerAgent):
     # ── Search ────────────────────────────────────────────────────────
 
     def search(self, platform: str, skill_tags: List[str] = None) -> List[JobRecord]:
+        # Guard: Skip disabled/excluded platforms
+        if platform in self.EXCLUDED_PLATFORMS:
+            self._logger.info(f"SKIPPING excluded platform: {platform}")
+            return []
+        
         skills = skill_tags or self.TEAM_SKILLS[:6]
         skill_str = ", ".join(skills)
         plat_info = self.PLATFORMS.get(platform, {})
 
-        # All platform discovery uses LLM simulation or social_earning_platform
-        prompt = (PromptBuilder()
-                  .context(f"Platform: {platform} — {plat_info.get('speciality', '')}")
-                  .context(f"Search for jobs requiring: {skill_str}")
-                  .instruction("Generate 4-6 realistic job listings as JSON array.")
-                  .build())
-
-        self._logger.info(f"Searching {platform} for: {skill_str[:60]}")
-        raw = self.llm(system=self.SEARCH_SYSTEM, user=prompt, max_tokens=800)
-
+        # Real platform client integrations
         jobs: List[JobRecord] = []
-        if raw.startswith("ERROR:"):
-            self._logger.error(f"LLM search failed: {raw}")
-            return jobs
-
-        try:
-            import re
-            clean = re.sub(r"```[a-z]*|```", "", raw).strip()
-            items = json.loads(clean)
-            if not isinstance(items, list):
-                raise ValueError("Not a list")
-
-            for item in items:
-                if not isinstance(item, dict):
-                    continue
-                jid = fingerprint(platform + item.get("title", "") + str(item.get("budget_usd", 0)))
-                if self._job_db.job_exists(jid):
-                    continue
-                jr = JobRecord(
-                    job_id=jid,
-                    platform=platform,
-                    title=str(item.get("title", "Untitled"))[:120],
-                    description=str(item.get("description", ""))[:800],
-                    budget=float(item.get("budget_usd", 0)),
-                    skills=list(item.get("required_skills", [])),
-                    url=str(item.get("url", plat_info.get("url", "")))
+        
+        # Initialize clients if needed
+        if not hasattr(self, '_fiverr_client') or self._fiverr_client is None:
+            try:
+                from agents.fiverr_client import FiverrClient
+                self._fiverr_client = FiverrClient()
+                self._logger.info("Fiverr client initialized")
+            except Exception as e:
+                self._logger.warn(f"Fiverr client init failed: {e}")
+        
+        if not hasattr(self, '_upwork_client') or self._upwork_client is None:
+            try:
+                from agents.upwork_client import UpworkClient
+                up_id = os.getenv("UPWORK_CLIENT_ID", "")
+                up_sec = os.getenv("UPWORK_CLIENT_SECRET", "")
+                if up_id and up_sec:
+                    self._upwork_client = UpworkClient(up_id, up_sec, "", "")
+                    self._logger.info("Upwork client initialized")
+            except Exception as e:
+                self._logger.warn(f"Upwork client init: {e}")
+        
+        # Fiverr search via RSS
+        if platform == "Fiverr" and self._fiverr_client:
+            try:
+                gigs = self._fiverr_client.find_gigs(
+                    query=skill_str.split(",")[0] or "python",
+                    count=10
                 )
-                jobs.append(jr)
-                self._job_db.upsert_job(jr)
-
-            self._job_db.log_search(platform, skill_str, len(jobs))
-            self._logger.info(f"Found {len(jobs)} new jobs on {platform}")
-        except Exception as e:
-            self._logger.error(f"Parse error: {e} | raw={raw[:100]}")
-
+                for g in gigs:
+                    jr = JobRecord(
+                        job_id=fingerprint(f"fiverr_{g.id}"),
+                        platform="Fiverr",
+                        title=getattr(g, "title", "")[:120] or "Untitled",
+                        description=getattr(g, "description", "")[:800] if hasattr(g, "description") else "",
+                        budget=float(getattr(g, "budget_usd", 0)),
+                        skills=getattr(g, "skills", skill_str.split(",")[:5]),
+                        url=getattr(g, "url", "")
+                    )
+                    if not self._job_db.job_exists(jr.job_id):
+                        jobs.append(jr)
+                        self._job_db.upsert_job(jr)
+            except Exception as e:
+                self._logger.warn(f"Fiverr search error: {e}")
+        
+        # Upwork search via API  
+        elif platform == "Upwork" and self._upwork_client:
+            try:
+                gigs = self._upwork_client.find_gigs(
+                    q=skill_str.split(",")[0],
+                    limit=10
+                )
+                for g in gigs:
+                    jr = JobRecord(
+                        job_id=fingerprint(f"upwork_{g.id}"),
+                        platform="Upwork",
+                        title=getattr(g, "title", "")[:120] or "Untitled",
+                        description=getattr(g, "description", "")[:800] if hasattr(g, "description") else "",
+                        budget=float(getattr(g, "budget_usd", 0)),
+                        skills=getattr(g, "skills", skill_str.split(",")[:5]),
+                        url=getattr(g, "url", "")
+                    )
+                    if not self._job_db.job_exists(jr.job_id):
+                        jobs.append(jr)
+                        self._job_db.upsert_job(jr)
+            except Exception as e:
+                self._logger.warn(f"Upwork search error: {e}")
+        
+        # Web search fallback for other platforms
+        elif platform in self.ACTIVE_PLATFORMS:
+            try:
+                from library import web_search
+                query = f"{skill_str} freelance {platform.lower()}"
+                self._logger.info(f"Web searching: {query}")
+                results = web_search(query, limit=5)
+                for r in results[:5]:
+                    title = r.get("title", "")
+                    url = r.get("url", "")
+                    if title and url:
+                        jr = JobRecord(
+                            job_id=fingerprint(platform + title),
+                            platform=platform,
+                            title=title[:120],
+                            description=r.get("description", "")[:800],
+                            budget=100.0,
+                            skills=[skill_str.split(",")[0]],
+                            url=url
+                        )
+                        if not self._job_db.job_exists(jr.job_id):
+                            jobs.append(jr)
+                            self._job_db.upsert_job(jr)
+            except Exception as e:
+                self._logger.warn(f"Web search failed: {e}")
+        
+        self._job_db.log_search(platform, skill_str, len(jobs))
+        self._logger.info(f"Found {len(jobs)} new jobs on {platform}")
+        
         return jobs
 
     # ── Evaluate ──────────────────────────────────────────────────────────────

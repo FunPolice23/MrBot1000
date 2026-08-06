@@ -23,9 +23,9 @@ The system operates with specialized agents sharing state through `SharedContext
 | Manager | Coordinator & intent classifier | Main (gemma-4-E2B) | #bb86fc (purple) |
 | Coordinator | Cross-model communication | Main | #a855f7 (fuchsia) |
 | Summarizer | Chat & conversation | Chat (LFM2.5-1.2B) | #00b0ff (cyan) |
-| Coder | Code analysis & modification | Main | #84cc16 (green) |
-| Analyst | Code review & suggestions | Main | #3b82f6 (blue) |
-| JobSearch | Find gigs on platforms | Main | #f97316 (orange) |
+| Coder | Code modification (actual file writes) | Main | #84cc16 (green) |
+| Analyst | Code review & proposal analysis | Main | #3b82f6 (blue) |
+| JobSearch | Find gigs (Fiverr, Upwork, web_search) | Main | #f97316 (orange) |
 
 ### Model Routing Strategy
 - **Chat/Questions** → Summarizer with `chat=True` (fast, ~2s)
@@ -105,6 +105,7 @@ OLLAMA_CHAT_MODEL=hf.co/LiquidAI/LFM2.5-1.2B-Instruct-GGUF:Q5_K_M
 6. **document-qa.md** - Answer questions about documents
 
 ### Safety-First Defaults (when no skill exists)
+
 | Action Type | Default Behavior |
 |-------------|------------------|
 | discovery | Return empty/limited results |
@@ -166,30 +167,40 @@ earnings.db                   # SQLite, financial tracking
 └── payouts                   # Completed payments
 ```
 
-### File Structure
+### File Structure (ACTUAL - 2026-08-06)
 ```
 MrBot1000/
 ├── main.py                   # Desktop app entry point
-├── manager.py                # Agent orchestration
-├── action_pipeline.py        # Secure code execution
-├── earning_pipeline.py       # Income tracking
-├── earning_memory.py         # Multi-tier memory
+├── manager.py                # Agent orchestration (v4 - Opportunity Lifecycle Edition)
+├── action_pipeline.py        # Secure code execution with validation
+├── earning_pipeline.py       # Income tracking (real client: Fiverr/Upwork web search)
+├── earning_memory.py         # Multi-tier memory system (5 tiers)
 ├── database.py               # SQLite wrappers
-├── library.py                # Utility functions
+├── library.py                # Utility functions (web_search, safe_write_file)
 ├── ui.py                     # PySide6 UI components
-├── agents/                   # Agent implementations
-│   ├── coordinator.py        # Cross-model bridge
-│   ├── summarizer.py         # Chat handling
-│   ├── coder.py              # Code agent
-│   ├── job_search.py         # Gig finder
-│   ├── ...
-│   └── shared_context.py     # State sharing
-├── skills/                   # Task specifications
-│   ├── social-discovery.md
-│   ├── opportunity-*.md
-│   └── document-qa.md
-└── ARCHITECTURE.md           # This file!
+├── Agent.md                  # This file - Agent runtime specifications
+├── Skill.md                  # Skill specification format
+├── .env.example              # Environment template
+├── .gitignore                # Git ignore template
+└── agents/                   # Agent implementations
+    ├── base_worker.py        # Base worker with path validation and safe_write_file()
+    ├── coder.py              # NEW (v4.0.3): Code agent with actual file execution
+    ├── summarizer.py         # Chat agent (handles SummarizerThread)
+    ├── job_search_worker.py  # Job discovery (REAL client: FiverrClient, UpworkClient)
+    ├── analyst_worker.py     # Proposal analysis (IMPLEMENTED)
+    ├── coordinator.py        # Cross-model coordination
+    ├── shared_context.py     # Shared state JSON file
+    ├── opportunity_lifecycle.py  # Lifecycle state machine
+    ├── fiverr_client.py      # Fiverr RSS-based gig discovery
+    ├── upwork_client.py      # Upwork API client
+    └── [other workers...]    # airdrop_claimer, airdrop_scanner, etc.
+└── tests/                    # Test suite
+    ├── __init__.py
+    ├── __main__.py
+    └── test_results/         # Generated test JSON reports
 ```
+
+⚠️ **IMPORTANT**: Do NOT reference `source.py` or `_argcomplete.py` - these files do NOT exist in this project. The model may hallucinate non-existent files; always verify against the actual agent implementations above.
 
 ---
 
@@ -274,4 +285,4 @@ Cross-model communication happens via `SharedContext` JSON file, allowing:
 - **Repository**: Local only (no GitHub)
 - **Version**: Tracked in CHANGELOG.md
 - **Support**: Self-hosted agent community
-- **Last Updated**: 2026-08-04
+- **Last Updated**: 2026-08-06

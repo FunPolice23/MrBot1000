@@ -486,8 +486,15 @@ class ActionPipeline:
         """Resolve a relative path and verify it stays inside ROOT_FOLDER."""
         rel = rel.lstrip("/\\")
         full = (self.root / rel).resolve()
-        if not str(full).startswith(str(self.root)):
-            return None
+        try:
+            if not full.is_relative_to(self.root):
+                return None
+        except AttributeError:
+            # Compatibility fallback for Python versions without is_relative_to.
+            if not str(full).startswith(str(self.root) + os.sep):
+                return None
+            if full == self.root:
+                return None
         return full
 
     def _exec_create_file(self, action: ProposedAction) -> ExecutionResult:

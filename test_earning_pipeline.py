@@ -208,6 +208,134 @@ class TestEarningPipeline(unittest.TestCase):
         self.assertIsInstance(result.success, bool)
         self.assertGreater(len(result.message), 0)
 
+    def test_evaluate_parses_embedded_json_scores(self):
+        from earning_pipeline import EarningPipeline, Opportunity
+
+        pipe = EarningPipeline(db_path=self.tmp_db)
+        opp = Opportunity(
+            id="eval_json_parse",
+            source="social",
+            type="gig",
+            title="Python automation task",
+            description="Need AI and data workflow scripting",
+            platform="Reddit",
+            estimated_usd_value=20.0,
+        )
+
+        class _Response:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {
+                    "message": {
+                        "content": (
+                            "Here is your evaluation. "
+                            "{\"profit\": 6, \"effort\": 3, \"risk\": 2, \"urgency\": 5, \"skill_match\": 7} "
+                            "Done."
+                        )
+                    }
+                }
+
+        with patch("httpx.post", return_value=_Response()):
+            out = pipe._evaluate_opportunity(opp)
+
+        self.assertEqual(out.status, "evaluated")
+        self.assertGreater(out.skill_match, 0)
+        self.assertEqual(out.risk_level, "low")
+
+    def test_execute_airdrop_success(self):
+        from earning_pipeline import EarningPipeline, Opportunity
+        from agents.airdrop_scanner import AirdropOpportunity
+
+        pipe = EarningPipeline(db_path=self.tmp_db)
+        opp = Opportunity(
+            id="airdrop_test_success",
+            source="airdrop",
+            type="airdrop",
+            title="Test Airdrop",
+            description="Test claim path",
+            platform="AirdropHub",
+            url="https://example.com/airdrop",
+            estimated_usd_value=25.0,
+        )
+
+        class _Result:
+            success = True
+            message = "claimed"
+
+        class _StubClaimer:
+            def claim(self, airdrop):
+                self.last_arg = airdrop
+                return _Result()
+
+        stub = _StubClaimer()
+
+        with patch("earning_pipeline.AirdropClaimer", return_value=stub):
+            result = pipe._execute_airdrop(opp)
+
+        self.assertTrue(result.success)
+        self.assertEqual(result.action_taken, "claim")
+        self.assertEqual(opp.status, "claimed")
+        self.assertIsInstance(stub.last_arg, AirdropOpportunity)
+        self.assertEqual(stub.last_arg.claim_url, opp.url)
+
+    def test_execute_airdrop_failure(self):
+        from earning_pipeline import EarningPipeline, Opportunity
+
+        pipe = EarningPipeline(db_path=self.tmp_db)
+        opp = Opportunity(
+            id="airdrop_test_failure",
+            source="airdrop",
+            type="airdrop",
+            title="Test Airdrop",
+            description="Test claim path",
+            platform="AirdropHub",
+            url="https://example.com/airdrop",
+            estimated_usd_value=25.0,
+        )
+
+        class _Result:
+            success = False
+            message = "denied"
+
+        class _StubClaimer:
+            def claim(self, _url):
+                return _Result()
+
+        with patch("earning_pipeline.AirdropClaimer", return_value=_StubClaimer()):
+            result = pipe._execute_airdrop(opp)
+
+        self.assertFalse(result.success)
+        self.assertEqual(result.action_taken, "claim")
+        self.assertEqual(opp.status, "claim_failed")
+
+    def test_execute_airdrop_bool_return_is_supported(self):
+        from earning_pipeline import EarningPipeline, Opportunity
+
+        pipe = EarningPipeline(db_path=self.tmp_db)
+        opp = Opportunity(
+            id="airdrop_test_bool",
+            source="airdrop",
+            type="airdrop",
+            title="Bool Return Airdrop",
+            description="Test bool claim return",
+            platform="AirdropHub",
+            url="https://example.com/airdrop",
+            estimated_usd_value=10.0,
+        )
+
+        class _StubClaimer:
+            def claim(self, _airdrop):
+                return True
+
+        with patch("earning_pipeline.AirdropClaimer", return_value=_StubClaimer()):
+            result = pipe._execute_airdrop(opp)
+
+        self.assertTrue(result.success)
+        self.assertEqual(result.message, "claimed")
+        self.assertEqual(opp.status, "claimed")
+
 
 class TestIntegration(unittest.TestCase):
     """Integration tests for earning pipeline workflow."""

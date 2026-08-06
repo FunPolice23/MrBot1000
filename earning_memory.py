@@ -290,16 +290,40 @@ class EarningMemory:
         """Remember that a skill was successful on a platform."""
         with self._lock:
             conn = sqlite3.connect(self.db_path)
-            conn.execute(
-                """INSERT INTO skill_memory (skill, success_count, total_revenue, platforms, last_used)
-                   VALUES (?, 1, ?, ?, ?)
-                   ON CONFLICT(skill) DO UPDATE SET
-                     success_count = success_count + 1,
-                     total_revenue = total_revenue + ?,
-                     platforms = json_insert(platforms, ?)""",
-                (skill, revenue, json.dumps([platform]), time.time(),
-                 revenue, f'${platform}')
-            )
+            row = conn.execute(
+                "SELECT success_count, total_revenue, platforms FROM skill_memory WHERE skill=?",
+                (skill,)
+            ).fetchone()
+
+            now = time.time()
+            if row is None:
+                platforms = [platform]
+                conn.execute(
+                    """INSERT INTO skill_memory
+                       (skill, success_count, failed_count, total_revenue, platforms, last_used)
+                       VALUES (?, 1, 0, ?, ?, ?)""",
+                    (skill, revenue, json.dumps(platforms), now)
+                )
+            else:
+                success_count = int(row[0] or 0) + 1
+                total_revenue = float(row[1] or 0.0) + revenue
+                existing_platforms_raw = row[2]
+                try:
+                    existing_platforms = json.loads(existing_platforms_raw) if existing_platforms_raw else []
+                except (TypeError, json.JSONDecodeError):
+                    existing_platforms = []
+
+                if not isinstance(existing_platforms, list):
+                    existing_platforms = [str(existing_platforms)]
+                if platform not in existing_platforms:
+                    existing_platforms.append(platform)
+
+                conn.execute(
+                    """UPDATE skill_memory
+                       SET success_count=?, total_revenue=?, platforms=?, last_used=?
+                       WHERE skill=?""",
+                    (success_count, total_revenue, json.dumps(existing_platforms), now, skill)
+                )
             conn.commit()
             conn.close()
 

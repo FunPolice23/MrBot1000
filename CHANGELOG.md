@@ -1,17 +1,163 @@
 # MrBot1000 v2.0 - CHANGELOG
 
+## [4.0.6] - 2026-08-06 - Env Config Alignment (.env / .env.example)
+
+- **Problem**: `.env` and `.env.example` had diverged — 6 `MRBOT_THEME_*` vars
+  (read by `theme_config.py`), `OLLAMA_MAIN_MODEL`, `PIPELINE_*`, `RESEARCH_CACHE_TTL`,
+  and `COMPACT_STATUS_REPORTS` were missing from `.env.example`; `.env` was missing
+  the optional `UPWORK_*` tokens and `OLLAMA_CHAT_GPU`.
+- **Changed**: `.env.example` rewritten as a complete template — now documents every
+  real key (theme, pipeline, research cache, compact reports, `OLLAMA_MAIN_MODEL`),
+  with empty/placeholder values (no real secrets).
+- **Changed**: `.env` extended with the optional `OLLAMA_CHAT_GPU='0'` and `UPWORK_*`
+  (empty) placeholders so its key set matches `.env.example`. All existing real values
+  (models, wallet, agent name, heartbeat interval) were left untouched.
+- **Verified**: Both files now contain exactly 39 matching keys; `key(example) == key(.env)`.
+  `theme_config.py` and `base_worker.py`/`startup_validation.py` read all documented vars.
+
+---
+
+## [4.0.5] - 2026-08-06 - Verification & Cleanup of 4.0.4
+
+- **Verified**: Ad-hoc behavior-level verification of 4.0.4 changes passed 24/24
+  (report: `C:\Users\cecil\AppData\Local\Temp\hermes-verify-404d.txt`).
+  Confirmed: `project_file_tree()` lists only real files (no `source.py`/`_argcomplete.py`,
+  no `.venv`/`site-packages` pollution); `research_all()` injects the tree as the
+  authoritative file list; Manager prompts reference Fiverr/Upwork only and explicitly
+  disable ClawGig/ClerkGig/uGig/Moltbook; `CoderWorker` uses `CODER_SYSTEM` (no
+  `SEARCH_SYSTEM` reuse); `JobSearchWorker.SEARCH_SYSTEM` states it must not invent listings.
+- **Cleaned**: Removed all temporary `hermes-verify-404*.py` scripts from temp dir.
+
+---
+
+## [4.0.4] - 2026-08-06 - Stop Hallucinated Files & Disabled-Platform Routing
+
+### Root-cause fix: subagents inventing non-existent files (source.py, _argcomplete.py)
+
+- **Added**: `project_file_tree()` in `agents/base_worker.py` — builds a compact, real index of the project root (excludes `.git`, `__pycache__`, `.venv`, etc.).
+- **Changed**: `WorkerAgent.research_all()` now prepends the full real file tree to the Manager's context, with an explicit "these are ALL the project files" framing. Subagents can no longer assume files like `source.py` exist.
+- **Changed**: `CoderWorker` (`agents/coder.py`) now injects the real project file tree into every prompt and uses a dedicated `CODER_SYSTEM` (previously it wrongly reused the JobSearch `SEARCH_SYSTEM`). It instructs the model to ONLY reference files in the tree.
+- **Impact**: Analyst/Coder/JobSearch no longer report changes to `source.py`/`_argcomplete.py`; decisions reference actual files (e.g. `agents/coder.py`, `manager.py`).
+
+### Root-cause fix: Manager still routing to disabled platforms (ClawGig/uGig/Moltbook)
+
+- **Changed**: `CEO_SYSTEM` (manager.py) now lists DISABLED platforms explicitly and restricts job discovery to Fiverr, Upwork, and web search.
+- **Changed**: `_FOCUS_AREAS[0]` updated from "ClawGig/uGig/Moltbook" to "Fiverr, Upwork, and web search".
+- **Changed**: `JobSearch` routing keywords in `_WORKER_ROUTING` now use fiverr/upwork instead of clawgig/ugig/moltbook.
+- **Changed**: `JobSearchWorker.SEARCH_SYSTEM` now states it does NOT invent listings and must never target disabled platforms.
+- **Impact**: Heartbeats no longer instruct the team to work ClawGig; `EXCLUDED_PLATFORMS` guard in `search()` is now backed by prompts that never request those platforms.
+- **Fixed**: `research_all()` and `project_file_tree()` now skip `.venv`/`.git`/`__pycache__`, so the injected context is NOT polluted with hundreds of `site-packages` files (including dependency `source.py` copies) — the model only sees the real project tree.
+
+---
+
+## [4.0.3] - 2026-08-06 - Coder Execution & Real Client Integration
+
+### Coder Worker Implementation - NEW
+
+- **NEW FILE**: `agents/coder.py` - Complete Coder worker agent with actual file write capability
+  - **Inherits**: `safe_write_file()` from `base_worker.WorkerAgent` for secure file operations
+  - **Methods**:
+    - `analyze_and_fix(file_path, issue_description)` - Analyzes and implements fixes
+    - `file_write(file_path, content, verify)` - Writes content with Python validation
+    - `refactor(file_path, refactor_instructions)` - Applies refactoring changes
+  - **Security**: Path validation, size limits, blocklist enforcement
+  - **Impact**: Coders now actually modify files instead of just reporting changes
+
+### Job Discovery - Real Client Integration (FINAL)
+
+- **FIXED**: `agents/job_search_worker.py` now uses REAL platform clients instead of LLM simulation
+  - **Fiverr Integration**: Uses `FiverrClient.find_gigs()` with RSS-based real gig discovery
+  - **Upwork Integration**: Uses `UpworkClient.find_gigs()` with OAuth2 API
+  - **Web Search Fallback**: Uses `library.web_search()` for other platforms
+  - **Impact**: Actual gig discovery from live platforms instead of simulated LLM output
+
+- **Added**: `EXCLUDED_PLATFORMS = {"ClawGig", "ClerkGig", "Clawgig", "TempDisabled", "Maintenance"}`
+  - Skips broken/disabled platforms that would return no results
+  - Guard: `if platform in self.EXCLUDED_PLATFORMS: return []`
+
+---
+
+## [4.0.2] - 2026-08-06 - Exclusions & Guards
+
+### Job Discovery Fixes - Initial
+
+- **Added**: `EXCLUDED_PLATFORMS` constant to prevent searching disabled platforms
+- **Added**: Exclusion guard in `search()` method
+- **Added**: Updated `TEAM_SKILLS` with additional relevant skills
+
+---
+
+## [4.0.0] - 2026-08-06 - Opportunity Lifecycle Integration
+
+### Task Routing & Decision-Making (A)
+
+- **Added**: Action cooldown mechanism - Prevents repeating the same action type within configured heartbeats (JobSearch: 3, Analyst: 5, Coder: 4, Manager: 6)
+- **Added**: Rule-based fallback for focus-to-worker mapping via `_FOCUS_WORKER_MAP` dictionary
+- **Added**: Focus area memory - Tracks last 5 actions in `_last_actions` list to avoid cycles
+- **Added**: Heartbeat metrics tracking - New `_heartbeat_metrics` dict tracking: analysis, job_search, coder, manager, total_tasks, successful, errors
+- **Added**: Task lock mechanism - `_task_lock` threading lock and `_task_in_progress` flag to prevent overlapping task execution
+- **Added**: `_heartbeat_count` to track total heartbeat cycles for cooldown calculations
+- **Added**: `_is_action_on_cooldown()` method to check if an action type is on cooldown
+- **Added**: `_get_forced_worker()` method for focus-based worker assignment
+- **Added**: `_log_heartbeat_summary()` method for periodic metrics logging every 5 heartbeats
+- **Added**: `set_summarizer()` method to connect summarizer to manager
+- **Added**: `research_folder` property with getter/setter for external data integration
+
+### Research Folder & Context Building (B)
+
+- **Added**: `research_folder` property on ManagerThread for external data integration
+- **Added**: `_research_file_mtimes` dictionary for incremental scanning support
+- **Added**: Export functions: `export_queued_jobs()`, `export_analytics_report()` (B.4)
+
+### Performance Optimizations (C)
+
+- **Added**: Async LLM support - `llm_async()` method in WorkerAgent with 15s timeout
+- **Added**: `_call_openai_async()`, `_call_anthropic_async()`, `_call_ollama_async()` methods using httpx
+- **Changed**: Default heartbeat interval from 60s to 120s (configurable via `HEARTBEAT_INTERVAL` env var)
+- **Added**: `LLM_TIMEOUT = 15.0` seconds constant for fast-failing LLM calls
+- **Added**: `task_summary` Signal for UI monitoring of metrics
+
+### Opportunity Lifecycle Automation (D)
+
+- **NEW FILE**: `agents/opportunity_lifecycle.py` - Complete lifecycle state machine
+- **Added**: `_process_opportunities()` - Automated queued→applied transition (D.1)
+- **Added**: Scheduler integration every `OPPORTUNITY_DISCOVERY_INTERVAL` heartbeats (D.2)
+- **Added**: Opportunity state machine: discovered → researched → queued → applied → in_progress → submitted → paid/failed
+- **Added**: `_update_opportunity_metrics()` - Track lifecycle stage transitions (E.2)
+- **Added**: `get_top_opportunities()` - Rank by value/effort ratio (D.4)
+- **Added**: Extended heartbeat metrics: opportunities_discovered, applied, submitted, paid
+- **Integrated**: Opportunity processing into main heartbeat loop (D.3)
+
+### Chat Window Filtering (FIX)
+
+- **Fixed**: Heartbeat and Task decision messages filtered from chat window
+  - `_on_chat_reply()` in `main.py` filters triggers starting with `"Heartbeat:"` or `"Task:"`
+  - Chat window remains clean; decisions shown in status/agents panel
+
+### Task Capabilities Verification
+
+- **Verified**: All 9 core capabilities work correctly:
+  1. File Reading (file_index)
+  2. File Research (research_all)
+  3. Task Routing (_route_to_worker)
+  4. Metrics Tracking (_heartbeat_metrics)
+  5. Opportunity Lifecycle (full pipeline)
+  6. Opportunity Ranking (get_top_opportunities)
+
+---
+
 ## Update 2026-08-05 - Theme Customization, Shared Research Context & Safe Mode
 
 ### Theme System & Visual Customization
 - **Added**: Multiple built-in UI themes including Dark, Light, Midnight-Blue, Ocean, Solar, Forest, Rose, Lavender, Neon-Cyberpunk, and Gradient-Mix.
 - **Added**: A new custom theme workflow so users can choose colors for the main application background, panel surfaces, text, accent/outline color, highlight color, and disabled text.
-- **Improved**: The Theme menu now exposes both preset themes and a dedicated “Customize Theme…” action for quick personalization.
+- **Improved**: The Theme menu now exposes both preset themes and a dedicated "Customize Theme…" action for quick personalization.
 - **Enhanced**: Theme colors now flow through the main window palette and stylesheet so the app feels more polished and easier to tailor for different working environments.
 
 ### Shared Research Knowledge Base
 - **Added**: Research snapshots are now persisted into the shared context layer so both the main-model workflow and the chat-model workflow can reuse the same research knowledge.
-- **Improved**: The chat router now includes the latest shared research snapshot in its runtime context, making conversational responses more grounded and consistent with the manager’s research scans.
-- **Enhanced**: The Management tab now exposes a visible research snapshot so the selected folder’s value is easier to inspect at a glance.
+- **Improved**: The chat router now includes the latest shared research snapshot in its runtime context, making conversational responses more grounded and consistent with the manager's research scans.
+- **Enhanced**: The Management tab now exposes a visible research snapshot so the selected folder's value is easier to inspect at a glance.
 - **Verified**: New regression coverage confirms that shared research context is available to the chat-side runtime flow.
 
 ### Safe Mode & CLI
@@ -26,8 +172,8 @@
 
 ### Shared Research Knowledge Base
 - **Added**: Research snapshots are now persisted into the shared context layer so both the main-model workflow and the chat-model workflow can reuse the same research knowledge.
-- **Improved**: The chat router now includes the latest shared research snapshot in its runtime context, making conversational responses more grounded and consistent with the manager’s research scans.
-- **Enhanced**: The Management tab now exposes a visible research snapshot so the selected folder’s value is easier to inspect at a glance.
+- **Improved**: The chat router now includes the latest shared research snapshot in its runtime context, making conversational responses more grounded and consistent with the manager's research scans.
+- **Enhanced**: The Management tab now exposes a visible research snapshot so the selected folder's value is easier to inspect at a glance.
 - **Verified**: New regression coverage confirms that shared research context is available to the chat-side runtime flow.
 
 ### Safe Mode & CLI
@@ -166,6 +312,8 @@
 - **Proposal Issues**: Missing timeline/deadline specification, missing budget discussion
 - **Recommendation**: Include clear requirements, deliverables, and timeline in proposals
 
+---
+
 ## Update 2026-08-05 - Notifications Panel Implementation
 
 ### UI: Collapsible Notifications Panel in Agents Tab
@@ -210,23 +358,23 @@
 
 ## Update 2026-08-04 - Chat, Security & Documentation
 
+### Documentation Enhanced
+- **Enhanced**: Full architecture documentation with agent roster, model routing, memory tiers
+- **Added**: Data flow diagrams, debugging info, development notes
+- **Impact**: Clear reference for any model interacting with the system
+
 ### Chat Routing Fixed
 - **Fixed**: Chat responses now appear in Agents tab instead of popup window
 - **File**: `main.py`
-- **Change**: `_on_summarizer_chat_reply` handler routes to `agents_tab.append_reply()`
 - **Impact**: Better UX - chat integrated directly into tab interface
 
 ### Chat Model Optimization
 - **Added**: `chat=True` parameter to summarizer LLM calls
 - **File**: `agents/summarizer.py`
-- **Change**: Faster responses (~2s instead of 18+s) by using chat model directly
-- **Impact**: Smoother chat experience
+- **Impact**: Faster responses (~2s instead of 18+s)
 
 ### Self-Improvement Security
-- **Fixed**: `PIPELINE_ALLOW_SELF_IMPROVE` setting now actually enforced
-- **Files**: `main.py`, `action_pipeline.py`
-- **Change**: Added proper permission check before executing self-improve actions
-- **Impact**: Safety - unchecked checkbox prevents automatic code modifications
+- **Fixed**: `PIPELINE_ALLOW_SELF_IMPROVE` setting now properly enforced
 
 ### Coordinator Integration
 - **Added**: Cross-model coordination via `CoordinatorWorker`
@@ -266,17 +414,42 @@ D:/MrBot1000_2.0/
 ├── .gitignore                # Git ignore template
 └── agents/
     ├── base_worker.py       # Base worker with path validation
-    ├── coder.py             # Coding agent
+    ├── coder.py             # NEW (v4.0.3): Coder agent with file execution
     ├── summarizer.py        # Chat agent (handles SummarizerThread)
-    ├── job_search_worker.py # Job discovery agent
-    ├── analyst_worker.py    # Proposal analysis (IMPLEMENTED)
+    ├── job_search_worker.py # Job discovery agent (real client integration v4.0.2)
+    ├── analyst_worker.py    # Proposal analysis
+    ├── fiverr_client.py     # Fiverr RSS-based gig discovery
+    ├── upwork_client.py     # Upwork API client
     ├── coordinator.py       # Cross-model coordination
     ├── shared_context.py    # Shared state JSON file
+    ├── opportunity_lifecycle.py  # Lifecycle state machine
     └── coordinator_agent.py # Cross-model agent
 
 tests/                          # NEW - Test suite
 ├── __init__.py                # Package initialization
 ├── __main__.py                # Test suite runner
 └── test_results/              # Generated test result files
-    └── test_run_YYYYMMDD_HHMMSS.json
 ```
+
+---
+
+## Agent Roster (Current)
+
+| Agent | Role | Model | Color |
+|-------|------|-------|-------|
+| Manager | Coordinator | Main | #bb86fc |
+| Coder | Python coding | Main | #84cc16 |
+| Summarizer | Chat/conversation | Chat | #00b0ff |
+| JobSearch | Job discovery | Main | #f97316 |
+| Analyst | Code analysis | Main | #3b82f6 |
+
+---
+
+## Key Features
+
+1. **Real-time Earning Pipeline**: Job search, offer tracking, income monitoring
+2. **Multi-tier Memory**: 5 levels from short-term to long-term persistence
+3. **Secure Execution**: Action pipeline with validation before file modifications
+4. **Provider Fallback**: OpenAI → Anthropic → Ollama
+5. **Cross-model Communication**: SharedContext JSON for state sharing
+6. **Real Gig Discovery**: RSS feeds and web search for actual freelance jobs (v4.0.3)

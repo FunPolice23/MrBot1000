@@ -71,6 +71,7 @@ Test results are saved to `tests/test_results/test_run_YYYYMMDD_HHMMSS.json`.
 - **Main model** (gemma-4-E2B or any model): GPU - Heavy analysis, code work, decisions
 - **Chat model** (LFM2.5-1.2B or any model): CPU - Fast conversation (~2s responses)
 - **Multi-agent system**: Manager, Coordinator, Coder, Summarizer, JobSearch, Analyst
+- **Message routing**: Agents tab messages enter Manager first; Manager decides task/command/conversation handling
 - **Cross-model communication**: SharedContext JSON file
 - **Opportunity lifecycle tracking**: Explicit, auditable stage transitions for discovered, researched, applied, in progress, submitted, paid, and failed opportunities
 - **Startup validation**: Checks configuration, provider availability, and safe-mode status before workflows begin
@@ -128,10 +129,10 @@ Key settings:
 
 | Agent | Role | Model | Purpose |
 |-------|------|-------|---------|
-| Manager | Coordinator | Main | Orchestrates tasks, routes to workers |
+| Manager | Coordinator | Main | Primary chat/task ingress, orchestrates tasks, routes to workers |
 | Coordinator | Cross-model | Main | Bridges chat and main models via SharedContext |
 | Coder | Coding | Main | Code refactoring, bug fixes, implementation |
-| Summarizer | Chat | Chat | Handles conversational queries |
+| Summarizer | Chat | Chat | Summarizes thought streams, maintains chat memory, and provides contextual reply support |
 | JobSearch | Job Discovery | Main | Finds gigs on Reddit, Fiverr, Upwork |
 | Analyst | Analysis | Main | Proposal metrics, job evaluation |
 

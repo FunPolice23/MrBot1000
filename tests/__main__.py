@@ -16,6 +16,10 @@ import argparse
 from datetime import datetime
 from pathlib import Path
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 # Test categories and their test functions
 TEST_CATEGORIES = {
     'syntax': {
@@ -24,7 +28,7 @@ TEST_CATEGORIES = {
     },
     'import': {
         'description': 'Import verification tests',
-        'tests': ['test_imports', 'test_analyst_worker', 'test_job_search', 'test_main']
+        'tests': ['test_imports', 'test_httpx_dependency', 'test_analyst_worker', 'test_job_search', 'test_main']
     },
     'health': {
         'description': 'Health and functionality tests',
@@ -86,6 +90,8 @@ def run_test(test_name: str) -> tuple:
         return test_imports()
     elif test_name == 'test_analyst_worker':
         return test_analyst_worker()
+    elif test_name == 'test_httpx_dependency':
+        return test_httpx_dependency()
     elif test_name == 'test_job_search':
         return test_job_search()
     elif test_name == 'test_main':
@@ -111,19 +117,19 @@ def test_syntax() -> tuple:
     import py_compile
     
     files = [
-        'D:/MrBot1000_2.0/manager.py',
-        'D:/MrBot1000_2.0/main.py',
-        'D:/MrBot1000_2.0/agents/analyst_worker.py',
-        'D:/MrBot1000_2.0/agents/job_search_worker.py',
-        'D:/MrBot1000_2.0/agents/coordinator.py',
-        'D:/MrBot1000_2.0/agents/summarizer.py',
-        'D:/MrBot1000_2.0/agents/base_worker.py',
+        PROJECT_ROOT / 'manager.py',
+        PROJECT_ROOT / 'main.py',
+        PROJECT_ROOT / 'agents/analyst_worker.py',
+        PROJECT_ROOT / 'agents/job_search_worker.py',
+        PROJECT_ROOT / 'agents/coordinator.py',
+        PROJECT_ROOT / 'agents/summarizer.py',
+        PROJECT_ROOT / 'agents/base_worker.py',
     ]
     
     failed = []
     for f in files:
         try:
-            py_compile.compile(f, doraise=True)
+            py_compile.compile(str(f), doraise=True)
         except py_compile.PyCompileError as e:
             failed.append(f"{Path(f).name}: {e}")
     
@@ -134,8 +140,6 @@ def test_syntax() -> tuple:
 
 def test_imports() -> tuple:
     """Verify core modules can be imported"""
-    sys.path.insert(0, 'D:/MrBot1000_2.0')
-    
     try:
         import agents.base_worker
         from agents.job_search_worker import JobSearchWorker
@@ -146,9 +150,20 @@ def test_imports() -> tuple:
     return True, "All core imports successful"
 
 
+def test_httpx_dependency() -> tuple:
+    """Verify httpx and dependent modules import in a cold environment."""
+    try:
+        import httpx
+        import agents.social_earning_platform
+        import earning_pipeline
+    except Exception as e:
+        return False, f"httpx/dependency import error: {e}"
+
+    return True, "httpx dependency imports are healthy"
+
+
 def test_main() -> tuple:
     """Verify main.py can be imported and ManagerThread has required methods"""
-    sys.path.insert(0, 'D:/MrBot1000_2.0')
     os.environ['QT_QPA_PLATFORM'] = 'offscreen'  # Avoid GUI issues
     
     try:
@@ -175,8 +190,6 @@ def test_main() -> tuple:
 
 def test_analyst_worker() -> tuple:
     """Verify AnalystWorker can be instantiated"""
-    sys.path.insert(0, 'D:/MrBot1000_2.0')
-    
     try:
         from agents.analyst_worker import AnalystWorker
         worker = AnalystWorker(api_key="", log_signal=lambda x: None)
@@ -187,8 +200,6 @@ def test_analyst_worker() -> tuple:
 
 def test_job_search() -> tuple:
     """Verify JobSearchWorker can be instantiated"""
-    sys.path.insert(0, 'D:/MrBot1000_2.0')
-    
     try:
         from agents.job_search_worker import JobSearchWorker
         worker = JobSearchWorker(api_key="", log_signal=lambda x: None)
@@ -199,8 +210,6 @@ def test_job_search() -> tuple:
 
 def test_analyst_metrics() -> tuple:
     """Test AnalystWorker proposal analysis functionality"""
-    sys.path.insert(0, 'D:/MrBot1000_2.0')
-    
     try:
         from agents.analyst_worker import AnalystWorker
         worker = AnalystWorker(api_key="", log_signal=lambda x: None)
@@ -219,8 +228,6 @@ def test_analyst_metrics() -> tuple:
 
 def test_job_evaluation() -> tuple:
     """Test job listing evaluation"""
-    sys.path.insert(0, 'D:/MrBot1000_2.0')
-    
     try:
         from agents.analyst_worker import AnalystWorker
         worker = AnalystWorker(api_key="", log_signal=lambda x: None)
@@ -245,8 +252,6 @@ def test_job_evaluation() -> tuple:
 
 def test_coordinator() -> tuple:
     """Verify CoordinatorWorker functionality"""
-    sys.path.insert(0, 'D:/MrBot1000_2.0')
-    
     try:
         from agents.coordinator import CoordinatorWorker
         from agents.shared_context import SharedContext

@@ -83,25 +83,25 @@ MrBot1000 is a **real-time AI agent system** for automated earning opportunity d
 **ManagerThread** (QThread):
 - Continuous background coordinator
 - Heartbeat monitoring (every 60s default)
-- Intent classification: `question` vs `task`
+- Intent classification: `task` vs `command` vs `conversation`
 - Routes:
-  - `question/conversation` → **Summarizer** (fast chat mode)
+        - `conversation` → **Manager** response path
   - `code task` → **Coder**
   - `job search` → **JobSearch**
   - `analysis` → **Analyst**
 
 **Signal Flow:**
 ```python
-human_queue ──► send_human_message() ──► _handle_human_message()
-                                           ├─> classify_intent()
-                                           ├─> if question: route_chat()
-                                           └─> if task: _execute_workflow()
+human_queue ──► send_human_message() ──► _handle_chat()
+                                           ├─> classify intent
+                                           ├─> task/command → manager workflows
+                                           └─> conversation → manager answer path
 ```
 
 ### 3. Agent Workers (`agents/`)
 
 #### SummarizerThread (`summarizer.py`)
-- **Purpose**: Chat interface, conversation history
+- **Purpose**: Thought summarization, conversation memory, and contextual support replies
 - **Model**: LFM2.5-1.2B (Ollama chat mode)
 - **Key Methods**:
   - `send_human_message(text)` - Queue for processing
@@ -188,30 +188,24 @@ main._human_send()
         ↓
 ManagerThread.send_human_message()
         ↓
-_handle_human_message()
+ManagerThread._handle_chat()
         ↓
-Intent: "question" 
+Intent classified: task / command / conversation
         ↓
-route_chat(text) → SummarizerThread
-        ↓
-SummarizerThread.send_human_message()
-        ↓
-_build_context() → chat_only mode
-        ↓
-Summarizer._handle_chat()
-        ↓
-self.worker.llm(chat=True, max_tokens=350)
+conversation path uses Manager chat response
         ↓
 Response received (278 chars)
         ↓
 chat_reply.emit(label, text)
         ↓
-MainWindow._on_summarizer_chat_reply()
+MainWindow._on_chat_reply()
         ↓
 agents_tab.append_reply(label, text)
         ↓
 Tab switches to Agents, shows response
 ```
+
+Note: Summarizer still contributes contextual information and background summaries via signal streams; it is not the default direct ingress for Agents-tab human messages.
 
 ### Task Flow (Coder Example)
 ```
