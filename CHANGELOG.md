@@ -1,5 +1,37 @@
 # MrBot1000 v2.0 - CHANGELOG
 
+## [2.0.13] - 2026-08-06 - Restore Custom Theme System
+
+### Root cause
+`theme_config.py` (the module holding every built-in preset — Dark, Light,
+Midnight-Blue, Ocean, Solar, Forest, Rose, Lavender, Neon-Cyberpunk, Gradient-Mix
+— plus the env-driven `Custom` theme via `MRBOT_THEME_*`) had become **dead code**:
+nothing imported it. `main.py`'s `apply_theme()` used its own inline `THEMES` dict
+(only 4–5 entries) and **never read `MRBOT_THEME_*`**, so the custom coloring and
+all presets were disconnected — the app silently fell back to a single hardcoded
+Dark palette. The `[INFO] Theme: Dark` startup line masked this because a theme
+*was* applied, just not the configurable one.
+
+### Fix
+- `main.py` now imports `theme_config` and delegates to
+  `resolve_theme_definition(theme_name)` as the single source of truth, so both
+  preset definitions and the `MRBOT_THEME_*` custom colors flow through again.
+- `MainWindow.THEMES` is reduced to a name list built from `THEME_PRESETS +
+  ["Custom"]`; the actual colors come from `theme_config`.
+- Exported `THEME_PRESETS` / `CUSTOM_THEME_NAME` from `theme_config.py` so the
+  Theme menu and Settings combobox enumerate every preset + the `Custom` option.
+- The Theme menu (`menubar.addMenu("Theme")`) and Settings `theme_combo`
+  (`addItems(self.THEMES.keys())`) now expose all 10 presets + `Custom`, instead
+  of the 4 inline stubs.
+
+### Verification (ad-hoc)
+- `main.py` syntax OK.
+- `resolve_theme_definition("Midnight-Blue")` returns full palette;
+  `resolve_theme_definition("Custom")` honors `MRBOT_THEME_BG`/`MRBOT_THEME_ACCENT`
+  (env override confirmed); unknown name falls back to `Dark`.
+- `apply_theme` references `resolve_theme_definition`; `THEMES` is name-only;
+  combobox/menubar consume `self.THEMES.keys()`.
+
 ## [2.0.12] - 2026-08-06 - JobSearch Web Branch Fix (honest fail)
 
 Continuation of the 2.0.11 live-log analysis. The `web` job-search branch was

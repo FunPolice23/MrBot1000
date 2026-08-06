@@ -58,6 +58,14 @@ from ui import (
         AgentSprite, QuadThoughtPanel, AgentsTab
     )
 
+# Theme system — single source of truth lives in theme_config.py
+# (preset definitions + env-driven "Custom" theme via MRBOT_THEME_*).
+from theme_config import (
+    resolve_theme_definition,
+    THEME_PRESETS,
+    CUSTOM_THEME_NAME,
+)
+
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QTabWidget, QPushButton, QVBoxLayout, QWidget,
     QLineEdit, QLabel, QComboBox, QHBoxLayout, QTreeView, QFileSystemModel,
@@ -169,45 +177,10 @@ class HttpWorker(QThread):
 class MainWindow(QMainWindow):
     log_signal = Signal(str)
 
-    THEMES = {
-        "Auto": None,
-        "Dark": {
-            "bg": "#121212", "fg": "#e0e0e0",
-            "accent": "#bb86fc", "disabled": "#555", "highlight": "#03dac6",
-            "qss_extra": (
-                "QProgressBar::chunk{background:qlineargradient("
-                "x1:0,y1:0,x2:1,y2:0,stop:0 #bb86fc,stop:1 #03dac6);}"
-            )
-        },
-        "Light": {
-            "bg": "#f5f5f5", "fg": "#212121",
-            "accent": "#6200ee", "disabled": "#aaaaaa",
-            "highlight": "#3700b3", "qss_extra": ""
-        },
-        "Neon-Cyberpunk": {
-            "bg": "#0d001a", "fg": "#00ffea",
-            "accent": "#ff00aa", "disabled": "#444", "highlight": "#ffea00",
-            "qss_extra": (
-                "*{font-family:'Consolas',monospace;}"
-                "QPushButton{border:1px solid #ff00aa;"
-                "background:#1a0033;color:#00ffea;}"
-                "QPushButton:hover{background:#ff00aa;color:black;}"
-                "QProgressBar::chunk{background:#ff00aa;}"
-            )
-        },
-        "Gradient-Mix": {
-            "bg": "#1e0033", "fg": "#d4a5ff",
-            "accent": "#ff6ec7", "disabled": "#663399", "highlight": "#00f2ff",
-            "qss_extra": (
-                "QWidget{background:qlineargradient("
-                "x1:0,y1:0,x2:1,y2:1,stop:0 #1e0033,stop:1 #330066);}"
-                "QLabel{color:#d4a5ff;}"
-                "QProgressBar{background:#330066;border:1px solid #ff6ec7;}"
-                "QProgressBar::chunk{background:qlineargradient("
-                "x1:0,y1:0,x2:1,y2:0,stop:0 #ff6ec7,stop:1 #00f2ff);}"
-            )
-        },
-    }
+    # Theme names exposed in the Theme menu / Settings combobox. The actual
+    # definitions live in theme_config.py (resolve_theme_definition), so the
+    # custom coloring (MRBOT_THEME_*) and all presets stay connected.
+    THEMES = {name: None for name in ["Auto"] + THEME_PRESETS + [CUSTOM_THEME_NAME]}
 
     def __init__(self):
         super().__init__()
@@ -1644,7 +1617,7 @@ class MainWindow(QMainWindow):
                        .palette().color(QPalette.Window).lightness() < 128)
             self.apply_theme("Dark" if is_dark else "Light")
             return
-        theme = self.THEMES.get(theme_name, self.THEMES["Dark"])
+        theme = resolve_theme_definition(theme_name)
         pal = QPalette()
         for role, key in [
             (QPalette.Window,        "bg"),

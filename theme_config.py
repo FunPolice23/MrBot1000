@@ -12,6 +12,14 @@ CUSTOM_THEME_KEYS = (
     "disabled",
 )
 
+# Preset theme names exposed in the UI (Theme menu + Settings combobox).
+# "Custom" is handled specially by resolve_theme_definition() using MRBOT_THEME_*.
+THEME_PRESETS = [
+    "Dark", "Light", "Midnight-Blue", "Ocean", "Solar",
+    "Forest", "Rose", "Lavender", "Neon-Cyberpunk", "Gradient-Mix",
+]
+CUSTOM_THEME_NAME = "Custom"
+
 
 def resolve_theme_definition(theme_name: str, env=None) -> dict:
     """Return a theme definition for a builtin preset or the custom theme."""
