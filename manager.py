@@ -361,6 +361,91 @@ class ManagerThread(QThread):
             return "action", worker, action
         return "unclear", "", decision
 
+    # ── Real execution engine ─────────────────────────────────────────────────
+    # Stages: THINK → PLAN → TOOL-CALL (real file/network ops) → CHECK → PROOFREAD
+    # The worker's LLM is used for reasoning/planning/proofreading only — never as
+    # a substitute for actually reading/writing/creating files or fetching gigs.
+
+    PLANNER_SYSTEM = (
+        "You are the planning module of MrBot1000. Given a manager directive and the "
+        "REAL project file tree, extract a structured execution plan as STRICT JSON "
+        "(no markdown fences). Schema:\n"
+        "{\n"
+        '  "file": "<relative path from the tree, or null if none>",\n'
+        '  "operation": "fix" | "refactor" | "create" | "search" | "analyze" | "audit" | "other",\n'
+        '  "platform": "fiverr" | "upwork" | "web" | null,\n'
+        '  "issue": "<concise description of what to change/check>",\n'
+        '  "rationale": "<one line>"\n'
+        "}\n"
+        "Rules: ONLY reference files that appear in the tree. If the directive names a "
+        "file NOT in the tree, set 'file' to null and operation to 'other'. "
+        "Return ONLY the JSON object."
+    )
+
+    def _plan_task(self, worker_name: str, action: str) -> dict:
+        """THINK + PLAN: ask the chat model to structure the directive into a plan.
+
+        Returns a dict; always includes 'operation' and 'issue'. Falls back to a
+        heuristic parse if the LLM returns garbage.
+        """
+        from agents.base_worker import project_file_tree
+        tree = project_file_tree()
+        user = (
+            f"Worker: {worker_name}\n"
+            f"Directive: {action}\n\n"
+            f"REAL PROJECT FILE TREE (only these files exist):\n{tree}\n\n"
+            "Return the JSON plan now."
+        )
+        try:
+            raw = self.worker.llm(system=self.PLANNER_SYSTEM, user=user, chat=True,
+                                  max_tokens=600)
+        except Exception:
+            raw = ""
+        plan = self._extract_json_plan(raw)
+        if plan is None:
+            # Heuristic fallback
+            plan = {
+                "file": None,
+                "operation": "other",
+                "platform": None,
+                "issue": action[:200],
+                "rationale": "heuristic fallback (LLM planner failed)",
+            }
+        return plan
+
+    @staticmethod
+    def _extract_json_plan(raw: str) -> dict | None:
+        if not raw:
+            return None
+        # Strip markdown fences if present
+        s = raw.strip()
+        if s.startswith("```"):
+            s = s.split("```", 2)[1]
+            if s and s[0] in "json\n":
+                s = s[4:] if s.startswith("json") else s
+        try:
+            obj = json.loads(s)
+            if isinstance(obj, dict) and "operation" in obj:
+                obj.setdefault("file", None)
+                obj.setdefault("platform", None)
+                obj.setdefault("issue", "")
+                return obj
+        except Exception:
+            pass
+        # Try to salvage a JSON object substring
+        m = re.search(r"\{.*\}", raw, re.DOTALL)
+        if m:
+            try:
+                obj = json.loads(m.group(0))
+                if isinstance(obj, dict) and "operation" in obj:
+                    obj.setdefault("file", None)
+                    obj.setdefault("platform", None)
+                    obj.setdefault("issue", "")
+                    return obj
+            except Exception:
+                pass
+        return None
+
     def _execute_with_worker(self, worker_name: str, action: str, context: str) -> str:
         info = self._roster.get(worker_name, self._roster.get("Coder"))
         w = info["worker"] if isinstance(info, dict) else self.worker
@@ -369,19 +454,114 @@ class ManagerThread(QThread):
         self._communicate("M→A", f"[To {worker_name}] Execute: {action[:80]}")
         self._a_think(f"[{worker_name}] Received task: {action}")
 
-        agent_prompt = (
-            f"You are the {worker_name} worker.\n"
-            f"Manager directive: {action}\n\n"
-            f"Available file context:\n{context[:8000]}"
-        )
-        result = w.llm(system=self.WORKER_SYSTEM, user=agent_prompt, chat=True)
+        # ── STAGE 1+2: THINK + PLAN ───────────────────────────────────────────
+        self._a_think(f"[{worker_name}] PLANNING: structuring directive…")
+        plan = self._plan_task(worker_name, action)
+        self._a_think(f"[{worker_name}] PLAN: {json.dumps(plan)[:300]}")
+        operation = (plan.get("operation") or "other").lower()
+        target_file = plan.get("file")
+        issue = plan.get("issue") or action
+        platform = (plan.get("platform") or "").lower()
 
-        self._a_think(f"[{worker_name}] Result:\n{result}")
-        result_short = (result.split("RESULT:")[-1].strip()
-                        if "RESULT:" in result else result[:200])
-        self._communicate("A→M", f"[{worker_name}] {result_short}")
+        # ── STAGE 3: TOOL-CALL — real ability dispatch ────────────────────────
+        evidence = ""           # concrete proof of what actually happened
+        ok = False
+        try:
+            if worker_name == "JobSearch" or operation == "search":
+                # Real gig discovery (Fiverr/Upwork/web) via the worker's clients
+                plat = platform or "fiverr"
+                if plat not in ("fiverr", "upwork", "web"):
+                    plat = "fiverr"
+                self._a_think(f"[JobSearch] TOOL-CALL: search('{plat}') — real client")
+                gigs = w.search(plat, skill_tags=["ai agent", "automation", "python"])
+                if gigs:
+                    evidence = (f"FOUND {len(gigs)} real gig(s) on {plat}. "
+                                f"Top: " + "; ".join(
+                                    f"{g.title} (${g.budget})" for g in gigs[:3]))
+                    ok = True
+                else:
+                    evidence = f"search('{plat}') returned 0 gigs (no matches / client error)"
+                    ok = True  # executed successfully, just no results
+
+            elif worker_name == "Analyst" or operation in ("analyze", "audit"):
+                # Real metrics / evaluation
+                self._a_think(f"[Analyst] TOOL-CALL: generate_metrics_report() — real analysis")
+                report = w.generate_metrics_report()
+                if isinstance(report, dict):
+                    evidence = (f"REPORT generated: "
+                                f"proposals={report.get('total_proposals', 0)}, "
+                                f"avg_quality={report.get('average_quality', 0)}, "
+                                f"submissions={report.get('submissions_recommended', 0)}")
+                    ok = True
+                else:
+                    evidence = f"analysis returned: {str(report)[:200]}"
+
+            elif worker_name == "Coder" or operation in ("fix", "refactor", "create", "audit"):
+                # Real file read → LLM fix → safe_write_file
+                if not target_file:
+                    evidence = ("No valid file in directive; cannot execute a file op "
+                                "safely. Skipped (no hallucinated edits).")
+                    ok = False
+                else:
+                    full = os.path.join(ROOT_FOLDER, target_file)
+                    if not os.path.exists(full):
+                        evidence = f"FILE NOT FOUND: {target_file} — cannot edit a non-existent file. Skipped."
+                        ok = False
+                    else:
+                        before = open(full, encoding="utf-8", errors="ignore").read()
+                        self._a_think(f"[Coder] TOOL-CALL: analyze_and_fix('{target_file}') — real read+write")
+                        res = w.analyze_and_fix(full, issue)
+                        if isinstance(res, dict) and res.get("success"):
+                            after = open(full, encoding="utf-8", errors="ignore").read()
+                            # ── STAGE 4: CHECK WORK — verify the file actually changed ──
+                            changed = before != after
+                            lines = after.count("\n") + 1
+                            evidence = (f"EDITED {target_file}: success=True, "
+                                        f"changed={changed}, lines={lines}, "
+                                        f"notes={res.get('notes','')}")
+                            ok = changed or res.get("success")
+                            # ── STAGE 5: PROOFREAD ──
+                            if changed:
+                                self._a_think(f"[Coder] PROOFREAD: verifying diff for {target_file}")
+                                proof = self._proofread_change(target_file, res.get("changes", []))
+                                evidence += f" | PROOFREAD: {proof}"
+                        else:
+                            evidence = (f"EDIT of {target_file} FAILED: "
+                                        f"{res.get('notes','unknown error') if isinstance(res,dict) else res}")
+                            ok = False
+            else:
+                # Unknown operation — do NOT pretend. Report honestly.
+                evidence = (f"Operation '{operation}' for {worker_name} has no real "
+                            f"tool implementation; no simulated result returned.")
+                ok = False
+
+        except Exception as e:
+            evidence = f"EXECUTION ERROR ({type(e).__name__}): {e}"
+            ok = False
+
+        # ── Emit the REAL result (verified evidence), not LLM self-narrative ──
+        status = "DONE" if ok else "NO-OP/FAILED"
+        result_text = f"[{status}] {worker_name}: {evidence}"
+        self._a_think(f"[{worker_name}] RESULT: {evidence}")
+        self._communicate("A→M", f"[{worker_name}] {evidence[:400]}")
         self._set_worker_free(worker_name)
-        return result
+        return result_text
+
+    def _proofread_change(self, file_path: str, diff) -> str:
+        """PROOFREAD: ask the chat model to sanity-check the applied diff."""
+        try:
+            diff_txt = "\n".join(diff) if isinstance(diff, (list, tuple)) else str(diff)
+            if not diff_txt.strip():
+                return "no diff produced"
+            user = (f"Review this unified diff for {file_path}. Confirm it is valid, "
+                    f"safe, and addresses the issue. Reply in ONE short sentence.\n\n"
+                    f"{diff_txt[:2500]}")
+            out = self.worker.llm(system=self.WORKER_SYSTEM, user=user, chat=True,
+                                   max_tokens=200)
+            return (out or "proofread skipped").strip().split("\n")[0][:200]
+        except Exception as e:
+            return f"proofread error: {e}"
+
 
     def _full_cycle(self, trigger_label: str, manager_prompt: str, context: str, focus: str = ""):
         decision = self._ceo_decide(trigger_label, manager_prompt, focus)

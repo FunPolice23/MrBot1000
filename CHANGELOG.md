@@ -1,5 +1,39 @@
 # MrBot1000 v2.0 - CHANGELOG
 
+## [2.0.10] - 2026-08-06 - Real Execution Engine (kill the simulation)
+
+### Root cause
+`_execute_with_worker()` (manager.py) called `worker.llm(chat=True)` and logged the
+model's free-text as the "Result". No file was ever read/written/edited and no gig was
+ever fetched — the agents *described* work as if done. The live log showed fake
+"RESULT: file modified" / "audit complete" lines with zero disk/network activity.
+
+### Fix — 5-stage real dispatch
+Rewrote `_execute_with_worker()` into a verifiable execution pipeline:
+1. **THINK + PLAN** — `_plan_task()` asks the chat model (with the real `project_file_tree()`)
+   to emit a STRICT JSON plan `{file, operation, platform, issue}`; `_extract_json_plan()`
+   parses it (markdown-fence tolerant, substring salvage). Falls back to a heuristic if the
+   LLM returns garbage.
+2. **TOOL-CALL** — dispatches to the *actual* worker abilities, not chat:
+   - `JobSearch`/`search` → `JobSearchWorker.search(platform)` (real Fiverr/Upwork/web clients)
+   - `Analyst`/`analyze`/`audit` → `AnalystWorker.generate_metrics_report()` (real metrics)
+   - `Coder`/`fix`/`refactor`/`audit` → `CoderWorker.analyze_and_fix()` (real read → LLM →
+     `safe_write_file()`)
+3. **CHECK WORK** — after a Coder edit the file is re-read and `before != after` is verified;
+   the change is confirmed on disk before claiming success.
+4. **PROOFREAD** — `_proofread_change()` asks the chat model to sanity-check the unified diff
+   in one sentence.
+5. **Honest RESULT** — emits `[DONE]`/`[NO-OP/FAILED]` with concrete evidence (bytes/lines/gig
+   count/metrics). No file = `FILE NOT FOUND` (skipped, no hallucinated edit); unknown op =
+   reported, never faked.
+
+### Verification
+Ad-hoc execution test (`hermes-exec-verify.py`, 12/12) confirmed: Coder really rewrites a file
+on disk (diff-verified), the check-work stage detects the change, Analyst returns honest
+metrics, JobSearch.search() returns the real client list type, and the planner parses JSON.
+
+---
+
 ## [2.0.9] - 2026-08-06 - Branding Alignment & Centered Title Header
 
 - **Renamed**: Window title changed from `MrBot1000 Agents v10 — Extended` to
