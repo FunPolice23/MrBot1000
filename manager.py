@@ -503,6 +503,20 @@ class ManagerThread(QThread):
         issue = plan.get("issue") or action
         platform = (plan.get("platform") or "").lower()
 
+        # ── PROPOSAL TASK SHORT-CIRCUIT ─────────────────────────────────────────
+        # "Prepare a proposal for this gig" is a BID-TEXT task, NOT a code edit.
+        # The generic planner otherwise maps it to a refactor of the app's own
+        # source (main.py) — which the coder-self-destruction guard then blocks.
+        # Generate the proposal as text instead, so gigs yield real bid drafts
+        # rather than wasted model calls + garbage "REFUSED" proposal records.
+        if action.startswith("Prepare a proposal for this gig"):
+            self._a_think(f"[{worker_name}] TOOL-CALL: generate_proposal_text() — bid draft (no source edit)")
+            proposal = self._prepare_proposal_text(action)
+            evidence = f"PROPOSAL DRAFTED: {proposal[:400]}"
+            ok = bool(proposal and len(proposal) > 20)
+            self._set_worker_free(worker_name)
+            return evidence, ok, proposal
+
         # ── STAGE 3: TOOL-CALL — real ability dispatch ────────────────────────
         evidence = ""           # concrete proof of what actually happened
         ok = False
@@ -843,21 +857,47 @@ class ManagerThread(QThread):
             f"Skills: {', '.join(job.get('skills',[]))}"
         )
         self._job_queue.pop(0)
-        result_text = self._execute_with_worker(free_w, task, "")
+        _evidence, _ok, proposal_text = self._execute_with_worker(free_w, task, "")
         # v2.0.21 P2#4: persist the drafted proposal so the work survives restart
-        # and is visible in DB Stats. Guarded: DB may be None in tests/headless.
+        # and is visible in DB Stats. The proposal text is now real bid copy
+        # (generated text), not an "REFUSED" edit record. Guarded: DB may be
+        # None in tests/headless.
         if getattr(self, "db", None) is not None:
             try:
                 self.db.add_proposal(
                     gig_title=job.get("title", "") or None,
                     platform=job.get("platform", "") or None,
                     budget_usd=float(job.get("budget", 0) or 0),
-                    draft=str(result_text or ""),
+                    draft=str(proposal_text or ""),
                     status="drafted",
                 )
                 self._m_think(f"[Proposal] saved draft for: {job.get('title','')[:50]}")
             except Exception as _prop_err:
                 self._m_think(f"[Proposal] save skipped: {_prop_err}")
+
+    def _prepare_proposal_text(self, task: str) -> str:
+        """Generate bid/proposal TEXT for a Fiverr/Upwork gig task.
+
+        This is intentionally NOT a code-edit operation — a proposal is client
+        copy, not a refactor of the application's own source. Uses the chat
+        model (fast) to draft a concise, professional proposal from the gig
+        title/budget/skills already embedded in `task`.
+        """
+        try:
+            system = (
+                "You are the proposal writer for an AI freelancing agency. "
+                "Write a short, professional Fiverr/Upwork-style proposal (3-5 "
+                "sentences) that addresses the client's gig, names concrete "
+                "deliverables, and states the budget fit. No markdown code "
+                "blocks. Be direct and persuasive."
+            )
+            draft = self.worker.llm(system=system, user=task, max_tokens=350, chat=True)
+            if not draft or draft.startswith("ERROR:"):
+                return ""
+            return draft.strip()
+        except Exception as e:
+            self._a_think(f"[Proposal] generation error: {e}")
+            return ""
 
     def get_discovery_summary(self) -> dict:
         """v2.0.21 P2#5: last EarningPipeline discovery snapshot for DB Stats."""

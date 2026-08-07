@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import List, Dict, Any
 
 from library import AgentLogger, PromptBuilder, ResponseParser
-from agents.base_worker import WorkerAgent, ROOT_FOLDER, project_file_tree
+from agents.base_worker import WorkerAgent, ROOT_FOLDER, project_file_tree, PROTECTED_SOURCE_FILES
 
 
 class CoderWorker(WorkerAgent):
@@ -72,6 +72,20 @@ class CoderWorker(WorkerAgent):
             return result
 
         result["exists"] = True
+
+        # ── PROTECTED APP SOURCE GUARD (proactive coder-self-destruction backstop) ──
+        # Never spend a model call trying to rewrite the app's own import-critical
+        # source (main.py, manager.py, …). The truncation guard in base_worker also
+        # protects these, but we refuse up-front so we don't burn an ~80s main-model
+        # call on a doomed edit — and so a "prepare a proposal" gig task can never
+        # be misinterpreted as a refactor of host source.
+        _bn = os.path.basename(file_path)
+        if _bn in PROTECTED_SOURCE_FILES:
+            result["notes"] = (
+                f"BLOCKED: protected app source '{_bn}' — refusing overwrite "
+                f"(coder self-destruction guard). Proposal/refactor tasks must not "
+                f"edit the application's own source.")
+            return result
 
         try:
             with open(file_path, 'r', encoding='utf-8') as f:

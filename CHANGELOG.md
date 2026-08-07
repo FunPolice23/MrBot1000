@@ -1,5 +1,53 @@
 # MrBot1000 v2.0 - CHANGELOG
 
+## [2.0.23c] - 2026-08-07 - Chat: Stop Hijacking Replies with Task Results
+
+### Bug: chat ignored the user's question and recited agent task results
+For any question (even "what is a gpu"), the Summarizer prepended
+`LATEST TASK RESULTS (HIGH PRIORITY):` and an instruction that commanded the
+model to start every answer with "Latest concrete result:". So general questions
+were answered with a status report about Fiverr gigs instead of the actual question.
+
+Fix (`agents/summarizer.py`):
+- `_handle_chat` now classifies the question as agent-related vs general. General
+  questions (no agent/job/gig/plan keywords) get NO task-results block and an
+  instruction to answer directly from the model's own knowledge.
+- Agent-related questions still receive task results, but as **optional background**
+  the model may cite only if directly relevant — never as a forced prefix.
+- `_CHAT_SYSTEM` softened: removed "highest-priority evidence" / "lead with it"
+  wording that reinforced the hijack.
+
+Verified (fresh ad-hoc): "what is a gpu" → no task-results block + direct-answer
+instruction; "what is the current plan" → results block present but optional;
+system prompt no longer forces task-results-first. Canonical suite 11/11.
+
+## [2.0.23b] - 2026-08-07 - Coder Self-Destruction Guard + Proposal-as-Text
+
+### Bug: Coder tried to rewrite `main.py` for every Fiverr gig (wasted + dangerous)
+Live log showed the Coder, on each "Prepare a proposal for this gig" task, planned
+`{"file": "main.py", "operation": "refactor"}` and called `analyze_and_fix('main.py')`
+— i.e. it tried to edit the app's OWN source for a bid task. The truncation guard
+refused the write (good), but it still burned an ~80s main-model call per gig and
+then saved the refusal text as a "drafted proposal" (garbage records). On a small
+model this looped ~12 times per heartbeat.
+
+Fixes:
+- **`agents/coder.py` `analyze_and_fix`**: added a PROTECTED_SOURCE_FILES pre-check
+  (imported from `base_worker`). Editing `main.py`/`manager.py`/etc. is now refused
+  *before* the LLM call with an explicit BLOCKED note — no wasted model call, and the
+  coder-self-destruction backstop is now proactive instead of relying on the truncation
+  guard as a last resort.
+- **`manager.py` `_execute_with_worker`**: gig-proposal tasks
+  (`"Prepare a proposal for this gig…"`) short-circuit to a new
+  `_prepare_proposal_text()` that generates real BID TEXT via the chat model (fast),
+  instead of being routed through `analyze_and_fix` on host source. Proposals are now
+  meaningful drafts, and the DB `proposals` table stores the bid copy, not "REFUSED".
+- Caller updated to unpack the new 3-tuple return `(evidence, ok, proposal_text)`.
+
+Verified (fresh ad-hoc): `analyze_and_fix('main.py')` BLOCKED pre-LLM (0 LLM calls);
+gig proposal routed to text generation; `_prepare_proposal_text` uses `worker.llm(chat=True)`;
+non-protected files still proceed normally. Canonical suite 11/11.
+
 ## [2.0.23a] - 2026-08-07 - Chat UX Fixes + JobSearch `_upwork_client` AttributeError
 
 ### Chat window UX

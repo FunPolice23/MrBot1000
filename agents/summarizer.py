@@ -248,8 +248,9 @@ class SummarizerThread(QThread):
             "Be helpful, accurate, and conversational. Max 250 words unless asked for more. "
             "Always explain technical details clearly. Do not invent capabilities or fake earnings. "
             "If asked about technical details, answer accurately based on your knowledge. "
-            "Treat the LATEST TASK RESULTS section as highest-priority evidence. "
-            "If a recent concrete task result exists, lead with it before broader commentary. "
+            "When task results are provided they are optional background you MAY cite "
+            "if directly relevant to the user's question; never lead with them or with a "
+            "fixed 'Latest concrete result:' phrase. "
             "Do not claim a task was completed unless it appears in the provided evidence."
         )
 
@@ -590,13 +591,43 @@ class SummarizerThread(QThread):
 
         conversation_str = self._conversation.render(include_timestamps=False)
 
+        # Decide whether the user's question is about the agent's own activity.
+        # If NOT (e.g. "what is a gpu"), we must NOT hijack the reply with task
+        # results — answer the question directly. If it IS, include results as
+        # *background* the model may cite, never as a forced prefix.
+        _AGENT_KW = ("agent", "bot", "manager", "ceo", "worker", "coder", "analyst",
+                     "job", "gig", "proposal", "search", "task", "result", "pipeline",
+                     "earning", "fiverr", "upwork", "reddit", "status", "running",
+                     "doing", "plan", "current", "summary", "discover", "queue")
+        ql = human_text.lower()
+        agent_related = any(k in ql for k in _AGENT_KW)
+
+        if agent_related:
+            latest_results_block = (
+                f"LATEST TASK RESULTS (optional background — only cite if it "
+                f"directly answers the question):\n{latest_results_context}\n\n"
+            )
+            results_rule = (
+                "If the user is asking about the agent's activity and the TASK "
+                "RESULTS above are directly relevant, you may reference them — but "
+                "lead with a direct answer to the question, not a fixed phrase. "
+                "Otherwise answer from general knowledge."
+            )
+        else:
+            latest_results_block = ""
+            results_rule = (
+                "This is a general question, NOT about the agent. Answer it directly "
+                "from your own knowledge. Do NOT mention task results, gigs, or the "
+                "agent's activity unless the user explicitly asks."
+            )
+
         user_prompt = (
-            f"LATEST TASK RESULTS (HIGH PRIORITY):\n{latest_results_context}\n\n"
+            f"{latest_results_block}"
             f"RECENT AGENT SUMMARIES:\n{summ_context}\n\n"
             f"RUNTIME CONTEXT:\n{runtime_context}\n\n"
             f"CONVERSATION SO FAR:\n{conversation_str}\n\n"
             f"Human: {human_text}\n\n"
-            f"Instruction: Route with {decision.route_to}. If the request is about program state, job search results, analytics, or code context, answer from the RUNTIME CONTEXT first. If LATEST TASK RESULTS contains relevant evidence, start your answer with 'Latest concrete result:' and summarize that first.\n"
+            f"Instruction: {results_rule} Keep replies concise and natural.\n"
             "Summarizer:"
         )
 
