@@ -1,4 +1,4 @@
-# MrBot1000 v2.0.22 — AI-Powered Earning Agent - W.I.P not a final product
+# MrBot1000 v2.0.23a — AI-Powered Earning Agent - W.I.P not a final product
 
 A real-time AI agent system for automated earning opportunity discovery, execution, and lifecycle tracking. Runs entirely locally — no cloud dependencies, no data sharing.
 
@@ -82,14 +82,15 @@ Test results are saved to `tests/test_results/test_run_YYYYMMDD_HHMMSS.json`.
 
 ## Architecture
 
-- **Main model** (gemma-4-E2B or any model): GPU - Heavy analysis, code work, decisions
-- **Chat model** (LFM2.5-1.2B or any model): CPU - Fast conversation (~2s responses)
+- **Main model** (any model Ollama serves — e.g. gemma-4-E2B, ornith, llama3, or any size): GPU/CPU - Heavy analysis, code work, decisions
+- **Chat model** (any model Ollama serves — e.g. gemma-3-1b, gemma-4-E2B, or any size): Fast conversation
 - **Multi-agent system**: Manager, Coordinator, Coder, Summarizer, JobSearch, Analyst
-- **Message routing**: Agents tab messages enter Manager first; Manager decides task/command/conversation handling
+- **Message routing**: Agents-tab chat is answered by the **Summarizer thread** (independent QThread, chat model) so replies are never blocked by the Manager's main-model work; task/command intents are forwarded to the Manager.
 - **Cross-model communication**: SharedContext JSON file
 - **Opportunity lifecycle tracking**: Explicit, auditable stage transitions for discovered, researched, applied, in progress, submitted, paid, and failed opportunities
 - **Startup validation**: Checks configuration, provider availability, and safe-mode status before workflows begin
 - **Secure execution**: 5-stage action pipeline with validation
+- **Instruction provenance gate** (v2.0.22): any external `SKILL.md`/playbook is untrusted data until human-approved; quarantined in a Review Queue
 
 ## UI Layout
 
@@ -117,9 +118,12 @@ The Agents tab contains:
 | `agents/opportunity_lifecycle.py` | Opportunity lifecycle state machine |
 | `agents/coordinator.py` | Cross-model SharedContext bridge |
 | `agents/analyst_worker.py` | Proposal metrics, job evaluation |
+| `agents/instruction_gate.py` | v2.0.22 provenance gate (untrusted SKILL.md) |
+| `agents/trust_boundary.py` | v2.0.22 high-trust action boundary |
+| `agents/platforms/` | v2.0.22 platform adapter skeleton (Fiverr/Reddit) |
 | `Agent.md` | Agent runtime contract & rules |
 | `ARCHITECTURE.md` | Full system architecture documentation |
-| `CHANGELOG.md` | Change history (currently v4.0.x) |
+| `CHANGELOG.md` | Change history (currently v2.0.23) |
 | `tests/__main__.py` | Test suite runner |
 
 ## Configuration
@@ -182,7 +186,7 @@ Key settings:
   - requests for HTTP/network access
   - anthropic and openai for optional cloud-provider integrations
   - feedparser and beautifulsoup4 for feed and HTML-based discovery
-- GPU: 6GB VRAM minimum (GTX 1660 Super or better)
-- RAM: 32GB recommended
+- **Hardware: runs on ANY setup** — from low-VRAM machines (e.g. 6GB VRAM + Zen3 + DDR4) up to modern RTX with more RAM. Model size is operator-chosen; the app works with whatever Ollama serves. A GPU helps speed but is not required.
+- RAM: 16GB minimum, 32GB recommended
 - Storage: 5GB+ for models and databases
 - Ollama server running locally at `127.0.0.1:11434`

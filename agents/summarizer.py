@@ -253,10 +253,11 @@ class SummarizerThread(QThread):
             "Do not claim a task was completed unless it appears in the provided evidence."
         )
 
-    def __init__(self, worker, db=None):
+    def __init__(self, worker, db=None, manager=None):
         super().__init__()
         self.worker   = worker
         self.main_db  = db                    # shared agent.db (optional)
+        self.manager  = manager               # ManagerThread ref (for task routing)
         self.summ_db  = SummarizerDB()        # own database
 
         # Session ID for this run
@@ -565,6 +566,16 @@ class SummarizerThread(QThread):
         # Style instruction
         style_instruction = self._speech_bank.as_prompt_instruction()
         decision = self._chat_router.classify(human_text)
+        # v2.0.22b: keep conversation on THIS independent thread (chat model,
+        # never blocked by the Manager's main-model heartbeat). Tasks/commands
+        # that the router says belong to the Manager are forwarded there.
+        if decision.route_to == "manager" and self.manager is not None:
+            self.manager.send_human_message(human_text)
+            self.chat_reply.emit(
+                "System",
+                "↪ Routed to Manager for task execution (independent of chat).")
+            self.status_changed.emit("Idle", "Watching thoughts…")
+            return
         runtime_context = self._chat_router.build_runtime_context(
             getattr(self.worker, "research_folder", None),
             user_message=human_text,

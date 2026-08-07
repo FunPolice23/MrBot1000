@@ -1005,8 +1005,7 @@ class UnifiedChatWidget(QDialog):
                 f'<span style="color:#b3e5fc;">{safe}</span><br>'
             )
             self._append_notification(label, ts, safe)
-            sb = self._display.verticalScrollBar()
-            sb.setValue(sb.maximum())
+            self._maybe_autoscroll()
             return
         if is_notification:
             self._append_notification(label, ts, safe)
@@ -1028,8 +1027,16 @@ class UnifiedChatWidget(QDialog):
                 f'<span style="color:#03dac6;font-weight:bold;">{label}:</span> '
                 f'<span style="color:#e0e0e0;">{safe}</span>'
             )
+        self._maybe_autoscroll()
+
+
+    def _maybe_autoscroll(self):
+        """Scroll to bottom only if user is already at/near bottom.
+        If they scrolled up to read, keep position (no yank on notifications)."""
         sb = self._display.verticalScrollBar()
-        sb.setValue(sb.maximum())
+        at_bottom = sb.value() >= sb.maximum() - 24
+        if at_bottom:
+            sb.setValue(sb.maximum())
 
     def _append_notification(self, label: str, ts: str, text: str):
         """Append agent notifications to the collapsible sidebar panel."""
@@ -1426,8 +1433,7 @@ class SummarizerChatWindow(QDialog):
                 f'<span style="color:#b3e5fc;">{safe}</span><br>'
             )
             self._append_notification(label, ts, safe)
-            sb = self._display.verticalScrollBar()
-            sb.setValue(sb.maximum())
+            self._maybe_autoscroll()
             return
         if is_notification:
             self._append_notification(label, ts, safe)
@@ -1449,8 +1455,16 @@ class SummarizerChatWindow(QDialog):
                 f'<span style="color:#03dac6;font-weight:bold;">{label}:</span> '
                 f'<span style="color:#e0e0e0;">{safe}</span>'
             )
+        self._maybe_autoscroll()
+
+
+    def _maybe_autoscroll(self):
+        """Scroll to bottom only if user is already at/near bottom.
+        If they scrolled up to read, keep position (no yank on notifications)."""
         sb = self._display.verticalScrollBar()
-        sb.setValue(sb.maximum())
+        at_bottom = sb.value() >= sb.maximum() - 24
+        if at_bottom:
+            sb.setValue(sb.maximum())
 
     def _append_notification(self, label: str, ts: str, text: str):
         """Append agent notifications to the collapsible sidebar panel."""
@@ -1797,8 +1811,7 @@ class AgentsTab(QWidget):
                 f'<span style="color:#b3e5fc;">{safe}</span><br>'
             )
             self._append_notification(label, ts, safe)
-            sb = self._display.verticalScrollBar()
-            sb.setValue(sb.maximum())
+            self._maybe_autoscroll()
             return
         if is_notification:
             self._append_notification(label, ts, safe)
@@ -1820,8 +1833,16 @@ class AgentsTab(QWidget):
                 f'<span style="color:#03dac6;font-weight:bold;">{label}:</span> '
                 f'<span style="color:#e0e0e0;">{safe}</span>'
             )
+        self._maybe_autoscroll()
+
+
+    def _maybe_autoscroll(self):
+        """Scroll to bottom only if user is already at/near bottom.
+        If they scrolled up to read, keep position (no yank on notifications)."""
         sb = self._display.verticalScrollBar()
-        sb.setValue(sb.maximum())
+        at_bottom = sb.value() >= sb.maximum() - 24
+        if at_bottom:
+            sb.setValue(sb.maximum())
 
     def _append_notification(self, label: str, ts: str, text: str):
         """Append agent notifications to the collapsible sidebar panel."""

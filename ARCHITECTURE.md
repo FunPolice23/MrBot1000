@@ -205,7 +205,7 @@ agents_tab.append_reply(label, text)
 Tab switches to Agents, shows response
 ```
 
-Note: Summarizer still contributes contextual information and background summaries via signal streams; it is not the default direct ingress for Agents-tab human messages.
+Note: As of v2.0.23, the **Summarizer thread is the default direct ingress** for Agents-tab human chat. It answers conversation/analysis on its own independent QThread (chat model) so replies are never blocked by the Manager main-model heartbeat; task/command intents are classified by agents/chat_router.py and forwarded to the Manager.
 
 ### Task Flow (Coder Example)
 ```

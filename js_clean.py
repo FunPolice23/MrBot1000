@@ -260,8 +260,6 @@ class JobSearchWorker(WorkerAgent):
     def __init__(self, api_key: str, log_signal, db=None):
         super().__init__(api_key, log_signal, db=db)
         self._job_db  = JobSearchDB()
-        self._fiverr_client = None   # lazy-init in search(); None until configured/used
-        self._upwork_client = None   # lazy-init in search(); None unless UPWORK_CLIENT_ID/SECRET set
         self._logger  = AgentLogger(db=db, source="JobSearchWorker",
                                     signal=log_signal)
         self._search_interval = int(os.getenv("JOB_SEARCH_INTERVAL", 300))  # 5 min
@@ -337,7 +335,7 @@ class JobSearchWorker(WorkerAgent):
                 self._logger.warn(f"Fiverr search error: {e}")
         
         # Upwork search via API  
-        elif platform == "Upwork" and getattr(self, "_upwork_client", None):
+        elif platform == "Upwork" and self._upwork_client:
             try:
                 gigs = self._upwork_client.find_gigs(
                     q=skill_str.split(",")[0],

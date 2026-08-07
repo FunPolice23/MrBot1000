@@ -184,7 +184,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("MrBot1000 v2.0.22")
+        self.setWindowTitle("MrBot1000 v2.0.23a")
         self.resize(1450, 950)
         self.root_folder  = ROOT_FOLDER
         self._http_workers = []
@@ -236,7 +236,7 @@ class MainWindow(QMainWindow):
                                    primary_ollama_model=ollama_main)
         self.manager = ManagerThread(api_key, self.worker, db=self.db,
                                    earning_pipeline=self.earning_pipeline)
-        self.summarizer = SummarizerThread(self.worker, db=self.db)
+        self.summarizer = SummarizerThread(self.worker, db=self.db, manager=self.manager)
         self.manager.set_summarizer(self.summarizer)  # Connect summarizer to manager
 
         # Register specialized workers with the CEO manager
@@ -606,7 +606,7 @@ class MainWindow(QMainWindow):
         container_layout.setContentsMargins(0, 0, 0, 0)
         container_layout.setSpacing(0)
 
-        title_lbl = QLabel("MrBot1000 v2.0.22")
+        title_lbl = QLabel("MrBot1000 v2.0.23a")
         title_lbl.setAlignment(Qt.AlignHCenter | Qt.AlignVCenter)
         title_lbl.setStyleSheet(
             "font-size:15px; font-weight:bold; padding:8px 0px; "
@@ -699,7 +699,14 @@ class MainWindow(QMainWindow):
             "System", "Heartbeat paused" if checked else "Heartbeat resumed")
 
     def _human_send(self, text: str):
-        self.manager.send_human_message(text)
+        # v2.0.22b: route chat to the SummarizerThread (independent QThread,
+        # chat model) so replies are never blocked by the Manager's main-model
+        # heartbeat. The Summarizer forwards task/command intents back to the
+        # Manager via the chat router. Falls back to Manager if summarizer unset.
+        if getattr(self, "summarizer", None) is not None:
+            self.summarizer.send_human_message(text)
+        else:
+            self.manager.send_human_message(text)
         self.thought_panel.route("Comms", text, "Human→M")
 
     def create_management_tab(self):
@@ -1921,14 +1928,16 @@ class MainWindow(QMainWindow):
         self.summarizer.send_human_message(text)
 
     def _on_summarizer_chat_reply(self, label: str, text: str):
-            """Handle chat reply from summarizer - update tab display."""
-            try:
-                # Use the agents tab's built-in chat display (same as Manager thoughts)
-                if hasattr(self, 'agents_tab') and hasattr(self.agents_tab, 'append_reply'):
-                    self.agents_tab.append_reply(label, text)
-                    self.centralWidget().setCurrentIndex(1)  # Switch to Agents tab (index 1)
-            except Exception as e:
-                self.log_signal.emit(f"Chat display error: {e}")
+        """Handle chat reply from summarizer - update tab display."""
+        try:
+            # Use the agents tab's built-in chat display (same as Manager thoughts)
+            if hasattr(self, 'agents_tab') and hasattr(self.agents_tab, 'append_reply'):
+                self.agents_tab.append_reply(label, text)
+                # Switch to the Agents tab (index 1) using the real QTabWidget.
+                if getattr(self, "tabs", None) is not None:
+                    self.tabs.setCurrentIndex(1)
+        except Exception as e:
+            self.log_signal.emit(f"Chat display error: {e}")
 
     def _on_strategy_change(self, strategy: str):
         self.summarizer.set_strategy(strategy)

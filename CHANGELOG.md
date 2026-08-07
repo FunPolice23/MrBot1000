@@ -1,5 +1,66 @@
 # MrBot1000 v2.0 - CHANGELOG
 
+## [2.0.23a] - 2026-08-07 - Chat UX Fixes + JobSearch `_upwork_client` AttributeError
+
+### Chat window UX
+- **No more forced scroll-down on every message.** `append_reply` (all 3 chat
+  panels) now calls `_maybe_autoscroll()`, which only scrolls to the bottom if
+  the user is already at/near the bottom. If you scroll up to read a reply, the
+  view stays put instead of yanking you to the newest line on every
+  notification/heartbeat.
+- **Fixed `Chat display error: 'QWidget' object has no attribute 'setCurrentIndex'`.**
+  `_on_summarizer_chat_reply` called `self.centralWidget().setCurrentIndex(1)`,
+  but `centralWidget()` is the layout container, not the `QTabWidget`. Switched to
+  the real `self.tabs.setCurrentIndex(1)` (Agents tab). The error is gone.
+
+### JobSearch bug fix
+- **`'JobSearchWorker' object has no attribute '_upwork_client'` (AttributeError).**
+  Root cause: `JobSearchWorker.__init__` never set `self._upwork_client`; the lazy
+  init only created it inside `if up_id and up_sec:` (i.e. only when Upwork
+  credentials exist). With no credentials the attribute was *absent*, so the guard
+  `elif platform == "Upwork" and self._upwork_client:` raised AttributeError
+  (absent != None). Fix: initialize `self._fiverr_client = None` and
+  `self._upwork_client = None` in `__init__`, and harden the branch with
+  `getattr(self, "_upwork_client", None)`. search("Upwork") now returns `[]`
+  gracefully instead of crashing.
+
+### Notes
+- The `web_search` import warning (`cannot import name 'web_search' from 'library'`)
+  is pre-existing and already handled gracefully — the worker logs "Web search
+  unavailable" and returns 0 gigs. Web search is not wired up in this environment.
+  Left as-is (non-crashing, out of scope for this patch).
+
+## [2.0.23] - 2026-08-07 - Chat Routing Decoupled + Doc Corrections
+
+### Chat responsiveness fix (behavioral)
+The Agents-tab chat was answered on the **Manager's single thread**, which also
+runs the main-model heartbeat. A long main-model call (e.g. `ornith:9b` at ~120s
+per CEO decision) blocked the loop, so chat replies waited until that finished —
+the "chat delays until a subagent is free" symptom.
+
+Fix:
+- `main._human_send` now routes human chat to the **SummarizerThread** — an
+  independent QThread that uses the chat model and is never blocked by the
+  Manager's main-model work. Conversation replies immediately.
+- The Summarizer's chat router forwards `task`/`command` intents (classification
+  by `agents/chat_router.py`) back to the Manager, preserving task/command
+  handling. Pure conversation/analysis stays on the fast independent thread.
+- `SummarizerThread` now receives a `manager` reference (`main.py`) so it can
+  forward manager-bound messages.
+
+Verified (fresh ad-hoc): conversation -> summarizer (manager untouched);
+task intent -> forwarded to manager; conversation enqueued on the Summarizer's
+own queue (independent of the Manager loop).
+
+### Documentation corrections
+- README model references now say **any model Ollama serves** (no hardcoded
+  gemma-4-E2B / LFM2.5-1.2B); matches operator's hardware/model-agnostic goal.
+- README hardware requirements: runs on ANY setup (6GB Zen3+DDR4 → modern RTX);
+  model size operator-chosen; GPU not required. RAM 16GB min / 32GB rec.
+- README chat-routing note updated to the Summarizer-thread model; added the
+  v2.0.22 instruction provenance gate to the architecture + key-files list.
+- CHANGELOG reference fixed (was "v4.0.x" -> v2.0.23).
+
 ## [2.0.22] - 2026-08-07 - Security-First: Instruction Provenance Gate + Trust Boundary + Platform Adapter Skeleton
 
 Per operator directive: run on ANY hardware (6GB Zen3 DDR4 → modern RTX) with ANY
