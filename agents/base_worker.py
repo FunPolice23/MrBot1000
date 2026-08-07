@@ -84,7 +84,7 @@ PROTECTED_SOURCE_FILES = {
     "startup_validation.py", "test_earning_pipeline.py",
     "__init__.py", "base_worker.py", "coder.py", "analyst_worker.py",
     "job_search_worker.py", "fiverr_client.py", "upwork_client.py",
-    "chat_router.py", "summarizer.py", "coordinator.py", "shared_context.py",
+    "chat_router.py", "summarizer.py", "shared_context.py",
     "document_scanner.py", "task_workspace.py", "earning_discoverer.py",
     "opportunity_lifecycle.py", "wallet_manager.py", "content_generator.py",
     "workflow_planner.py", "social_earning_platform.py", "microtask_client.py",

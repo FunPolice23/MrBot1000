@@ -32,7 +32,7 @@ TEST_CATEGORIES = {
     },
     'health': {
         'description': 'Health and functionality tests',
-        'tests': ['test_analyst_metrics', 'test_job_evaluation', 'test_coordinator']
+        'tests': ['test_analyst_metrics', 'test_job_evaluation']
     },
     'security': {
         'description': 'v2.0.22 security: instruction gate + trust boundary',
@@ -104,8 +104,6 @@ def run_test(test_name: str) -> tuple:
         return test_analyst_metrics()
     elif test_name == 'test_job_evaluation':
         return test_job_evaluation()
-    elif test_name == 'test_coordinator':
-        return test_coordinator()
     elif test_name == 'test_instruction_gate':
         return test_instruction_gate()
     elif test_name == 'test_trust_boundary':
@@ -129,7 +127,6 @@ def test_syntax() -> tuple:
         PROJECT_ROOT / 'main.py',
         PROJECT_ROOT / 'agents/analyst_worker.py',
         PROJECT_ROOT / 'agents/job_search_worker.py',
-        PROJECT_ROOT / 'agents/coordinator.py',
         PROJECT_ROOT / 'agents/summarizer.py',
         PROJECT_ROOT / 'agents/base_worker.py',
     ]
@@ -151,7 +148,6 @@ def test_imports() -> tuple:
     try:
         import agents.base_worker
         from agents.job_search_worker import JobSearchWorker
-        from agents.coordinator import CoordinatorWorker
     except Exception as e:
         return False, f"Import error: {e}"
     
@@ -281,22 +277,6 @@ def test_job_evaluation() -> tuple:
         return True, f"Job evaluation OK (action={result['recommended_action']})"
     except Exception as e:
         return False, f"Job evaluation error: {e}"
-
-
-def test_coordinator() -> tuple:
-    """Verify CoordinatorWorker functionality"""
-    try:
-        from agents.coordinator import CoordinatorWorker
-        from agents.shared_context import SharedContext
-        
-        # Check SharedContext file exists
-        sc_path = Path.home() / '.local/share/mrbot1000/shared_context.json'
-        if not sc_path.exists():
-            return True, "SharedContext file not yet created (will be created on first run)"
-        
-        return True, "Coordinator components OK"
-    except Exception as e:
-        return False, f"Coordinator error: {e}"
 
 
 def run_tests(test_list: list) -> tuple:

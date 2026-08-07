@@ -4,15 +4,12 @@
 
 from .airdrop_scanner import AirdropScanner, AirdropOpportunity
 from .base_worker import WorkerAgent
-from .coordinator import CoordinatorWorker
 from .job_search_worker import JobSearchWorker
 from .shared_context import SharedContext
 from .social_earning_platform import SocialEarningPlatform
 
 __all__ = [
     'WorkerAgent',
-    'SummarizerThread',
-    'CoordinatorWorker',
     'JobSearchWorker',
     'SharedContext',
     'AirdropScanner',
