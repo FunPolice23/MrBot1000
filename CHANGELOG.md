@@ -1,5 +1,36 @@
 # MrBot1000 v2.0 - CHANGELOG
 
+## [2.0.20c] - 2026-08-07 - Fix Ollama keep_alive Duration Rejection (400)
+
+### Bug fixed (LLM failed to load / "LLM unavailable")
+After upgrading the `ollama` Python client to 0.6.2, every Ollama request was
+rejected by the server with `time: missing unit in duration "10"`
+(status code 400), so the CEO/Manager LLM never loaded and heartbeats returned
+`ERROR: LLM unavailable`.
+
+**Root cause:** `WorkerAgent._call_ollama` passed `keep_alive="300"` — a
+**bare number with no unit**. Ollama 0.6.x's server validates `keep_alive` as a
+Go duration and rejects bare numbers. (Earlier client versions were lenient;
+0.6.2 is strict.) Verified directly: `"300"`/`"10"` → 400; `"300s"`/`"5m"`/`None`
+→ OK.
+
+**Fix:** added `_normalize_keep_alive()` which maps any value to a form Ollama
+accepts:
+- `-1` → `int(-1)` (keep loaded forever)
+- `0`/`"0"` → `int(0)` (unload immediately)
+- `"300"` (bare digits) → `"300s"`
+- `"5m"`/`"1h"` (already unit-suffixed) → unchanged
+- `None`/`""` → `None` (Ollama applies its own default)
+
+`_call_ollama` now uses `_normalize_keep_alive(os.getenv("OLLAMA_KEEP_ALIVE",
+"300s"))` (default changed from bare `"300"` to `"300s"`). `_shutdown_ollama`
+already used `keep_alive=0` (int), which is valid — left as-is.
+
+### Verification
+Unit checks of `_normalize_keep_alive` for all cases; **live** `ollama.chat`
+with the normalized default `"300s"` returned a real completion (no 400). Full
+test suite 9/9 pass.
+
 ## [2.0.20b] - 2026-08-06 - CRITICAL: Fix MainWindow Launch Crash (status_label)
 
 ### Bug fixed (blocked program launch)
@@ -25,11 +56,34 @@ on this Windows host (cp1252) could not encode the `✓` in the traceback, raisi
 `UnicodeEncodeError` *instead of* recording the real error. Now opens the file
 with `encoding="utf-8"`.
 
+### Corruption + recovery (found during full-scope review)
+While verifying the 2.0.20a fixes, `agents/base_worker.py` was found **corrupted**:
+it had been overwritten with a ~151-line truncated version that was **missing the
+`WorkerAgent` class entirely** and contained a stray `[INSTRUCTION] Fix the issue
+and return ONLY the complete fixed file content.` prompt-injection artifact. Every
+import failed with `cannot import name 'WorkerAgent'`, breaking the whole app.
+
+The file was never committed (only staged at an older revision), so the only
+copy of the 2.0.16–2.0.20 working-tree edits was destroyed. **Recovery:**
+restored the 505-line index version (which still had `WorkerAgent` +
+`safe_write_file`), then re-applied all session fixes:
+- 2.0.16 Bug B: `keep_alive=-1` → `OLLAMA_KEEP_ALIVE` TTL
+- 2.0.19: `ROOT_FOLDER` = project root, `project_file_tree`,
+  `WORKER_REGISTRY`, backup-before-edit `safe_write_file` + `restore_last_backup`
+- 2.0.20a: `llm()` `OLLAMA_MAIN_MODEL` precedence
+A scan confirmed the corruption was **isolated to `base_worker.py`** only
+(`coder.py`/`library.py` `INSTRUCTION`/"possible solution" hits were legitimate
+prompt strings). All changes were then committed (`41feb91`) so they are
+protected against future file corruption. **Lesson:** keep `base_worker.py`
+changes committed; uncommitted working-tree edits are the only copy and can be
+lost to a bad write.
+
 ### Verification
 Offscreen-Qt construction of `MainWindow()`: `create_settings_tab()` called
 exactly once; `self.status_label` is a live QLabel; `setText("…Registered ✓")`
 succeeds; settings tab index resolves (5). Program now launches past the
-previously-fatal line.
+previously-fatal line. Full test suite 9/9 pass after recovery + the `bs4`
+dependency install.
 
 ## [2.0.20a] - 2026-08-06 - Model Env-Var Precedence Fix (patch)
 

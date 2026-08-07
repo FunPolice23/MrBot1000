@@ -74,6 +74,33 @@ _CODEBASE_INDEX_SKIP_DIRS = WRITE_EXCLUSION_DIRS | {
 # Registry of worker classes by name (populated by manager registration).
 WORKER_REGISTRY = {}
 
+
+def _normalize_keep_alive(value) -> object:
+    """Normalize a keep_alive value into what Ollama 0.6.x accepts.
+
+    Ollama's server rejects bare-number durations ("300" -> status 400
+    "missing unit in duration"). Valid forms: int (0, -1) or a unit-suffixed
+    string ("300s", "5m", "1h"). We map:
+      -1          -> int -1  (keep loaded forever)
+      0 / "0"     -> int 0   (unload immediately)
+      "300"       -> "300s"  (bare digits get an 's' unit)
+      "5m"/"1h"   -> unchanged
+      None/""      -> None    (Ollama applies its own default)
+    """
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return value
+    s = str(value).strip()
+    if s == "":
+        return None
+    if s in ("-1", "0"):
+        return int(s)
+    if s.lstrip("-").isdigit():
+        return s + "s"
+    return s
+
+
 # Security blocklist – filenames that should never be read/written
 FILENAME_BLOCKLIST = {
     "config.yaml", "config.yml", ".env", "credentials.json",
@@ -314,8 +341,11 @@ class WorkerAgent:
                 options=options,
                 # TTL (not permanent pin): let Ollama evict under VRAM pressure.
                 # Fixed in 2.0.16 (Bug B) — keep_alive=-1 pinned the model in
-                # VRAM and caused RuntimeError on a 6GB GPU.
-                keep_alive=os.getenv("OLLAMA_KEEP_ALIVE", "300"),
+                # VRAM and caused RuntimeError on a 6GB GPU. Ollama 0.6.x requires
+                # a unit-suffixed duration ("300s", "5m"); a bare number ("300")
+                # is rejected (status 400 "missing unit in duration"). Normalize:
+                # -1 => forever (int), bare digits => append "s", else as-given.
+                keep_alive=_normalize_keep_alive(os.getenv("OLLAMA_KEEP_ALIVE", "300s")),
             )['message']['content']
             dt = time.time() - t0
             self.log_signal.emit(

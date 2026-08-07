@@ -184,7 +184,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("MrBot1000 v2.0.20b")
+        self.setWindowTitle("MrBot1000 v2.0.20c")
         self.resize(1450, 950)
         self.root_folder  = ROOT_FOLDER
         self._http_workers = []
@@ -499,7 +499,7 @@ class MainWindow(QMainWindow):
         container_layout.setContentsMargins(0, 0, 0, 0)
         container_layout.setSpacing(0)
 
-        title_lbl = QLabel("MrBot1000 v2.0.20b")
+        title_lbl = QLabel("MrBot1000 v2.0.20c")
         title_lbl.setAlignment(Qt.AlignHCenter | Qt.AlignVCenter)
         title_lbl.setStyleSheet(
             "font-size:15px; font-weight:bold; padding:8px 0px; "
@@ -522,7 +522,7 @@ class MainWindow(QMainWindow):
         tabs.addTab(self.create_db_stats_tab(),    "DB Stats")
 
         # Auto-populate the Ollama model dropdowns the first time the Settings
-        # tab is opened, so you don't have to click Refresh manually (v2.0.20b).
+        # tab is opened, so you don't have to click Refresh manually (v2.0.20c).
         self._ollama_autorefresh_done = False
         self._settings_tab_index = tabs.indexOf(settings_tab)
         tabs.currentChanged.connect(self._on_tab_changed)
@@ -1493,7 +1493,7 @@ class MainWindow(QMainWindow):
 
     def _on_tab_changed(self, index: int):
         # Auto-populate the Ollama model dropdowns the first time the Settings
-        # tab is shown (v2.0.20b). Avoids requiring a manual Refresh click and
+        # tab is shown (v2.0.20c). Avoids requiring a manual Refresh click and
         # avoids re-querying Ollama on every tab switch.
         if self._ollama_autorefresh_done:
             return
