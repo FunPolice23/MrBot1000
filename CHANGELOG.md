@@ -1,5 +1,47 @@
 # MrBot1000 v2.0 - CHANGELOG
 
+## [2.0.20h] - 2026-08-07 - Full-Scope Review Fixes: Analyst Data + Earning Pipeline Lives + Focus Map
+
+### P1 — Analyst pipeline was a dead end (proposals always 0)
+`generate_metrics_report()` reads `_metrics_store`, populated **only** by
+`analyze_proposal()`, which nothing ever called. So the "proposal quality" /
+"revenue" heartbeat focuses always reported `proposals=0, avg_quality=0`.
+**Fix:** when JobSearch finds gigs, each is fed to `AnalystWorker.analyze_proposal()`
+via the registered `Analyst` roster entry. Now discovered gigs become real analyzed
+proposals (verified: `total_proposals` went from 0 → 1 then scales with gig count).
+Guarded so a missing/unavailable Analyst never breaks the search result.
+
+### P1 — `EarningPipeline` was dead code (never instantiated or run)
+`EarningPipeline.discover()` existed but was never constructed by `main.py` and
+never called by the running app — a parallel discovery system that did nothing.
+**Fix:** instantiated in `main.py` (guarded, non-fatal on failure) and handed to
+`ManagerThread` via a new `earning_pipeline=` argument. During each heartbeat the
+Manager now calls `earning_pipeline.discover()` and merges discovered opportunities
+into the existing `_job_queue` (deduped by title), which `_process_job_queue` already
+handles. Verified live: `discover(['fiverr'])` returns ~10 real opportunities.
+
+### P2 — Two `_FOCUS_WORKER_MAP` entries routed to `Manager`, a no-op worker
+"worker coordination" and "agent speed" both mapped to `Manager`, which has no real
+tool → logged "Operation 'other' for Manager has no real tool implementation" every
+cycle. **Fix:** remapped both to `Coder` (real file/edit tools). All 8 focuses now
+dispatch to a worker with genuine capability.
+
+### P3 — `_plan_task` LLM planner emitted low-value "other" no-ops
+The planner prompt told it to fall back to `operation: "other"` + `file: null` for
+anything not exactly matching the tree, causing the Coder/Analyst to no-op (and
+tripping the 2.0.20g truncation/fallback guards). **Fix:** prompt now biases toward
+`fix`/`refactor`/`analyze`/`audit` with a REAL file from the tree for code directives,
+and `search` + platform for job directives — reducing dead "other" plans.
+
+### P3 — chat_router false alarm
+Review flagged `chat_router.py` as unwired; verification confirmed it IS used by
+`summarizer.py` (classify + build_runtime_context). No change needed.
+
+### Review scope (verified green)
+- 35 modules compile; 23 core modules import cleanly; `python -m tests` → 9/9.
+- No truncated/stray source files; no tracked changes pending.
+- Ad-hoc verification: EarningPipeline runs, Analyst fed, no Manager dead-ends.
+
 ## [2.0.20g] - 2026-08-07 - Fix Coder Self-Destruction + Fiverr Search + Manager Adaptation
 
 ### Critical: Coder agent was destroying its own source files (recurring ImportError)

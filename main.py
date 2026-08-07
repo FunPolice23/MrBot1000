@@ -184,7 +184,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("MrBot1000 v2.0.20g")
+        self.setWindowTitle("MrBot1000 v2.0.20h")
         self.resize(1450, 950)
         self.root_folder  = ROOT_FOLDER
         self._http_workers = []
@@ -203,6 +203,20 @@ class MainWindow(QMainWindow):
         self.pipeline.on_executed  = self._on_pipeline_executed
         self.pipeline.on_rejected  = self._on_pipeline_rejected
 
+        # ── Earning Pipeline engine (2.0.20h) ─────────────────────────────────
+        # Instantiated and handed to the Manager so its discovery engine actually
+        # runs during heartbeats (previously dead code — never constructed).
+        # Guarded: a failure here must NOT block app startup.
+        self.earning_pipeline = None
+        try:
+            from earning_pipeline import EarningPipeline
+            self.earning_pipeline = EarningPipeline(
+                db_path=os.path.join(ROOT_FOLDER, "earning.db"),
+                log_fn=lambda msg: self.log_signal.emit(f"[Earning] {msg}"),
+            )
+        except Exception as _ep_err:
+            self.log_signal.emit(f"[Startup] EarningPipeline unavailable: {_ep_err}")
+
         ollama_chat  = os.getenv("OLLAMA_CHAT_MODEL", "").strip() or None
         ollama_main  = os.getenv("OLLAMA_MAIN_MODEL", "").strip() or os.getenv("OLLAMA_MODEL", "").strip() or None
         self.log_signal.emit(f"[Startup] OLLAMA_CHAT_MODEL from env: {ollama_chat}")
@@ -211,7 +225,8 @@ class MainWindow(QMainWindow):
         self.worker  = WorkerAgent(api_key, self.log_signal, db=self.db,
                                    chat_ollama_model=ollama_chat,
                                    primary_ollama_model=ollama_main)
-        self.manager = ManagerThread(api_key, self.worker, db=self.db)
+        self.manager = ManagerThread(api_key, self.worker, db=self.db,
+                                   earning_pipeline=self.earning_pipeline)
         self.summarizer = SummarizerThread(self.worker, db=self.db)
         self.manager.set_summarizer(self.summarizer)  # Connect summarizer to manager
 
@@ -499,7 +514,7 @@ class MainWindow(QMainWindow):
         container_layout.setContentsMargins(0, 0, 0, 0)
         container_layout.setSpacing(0)
 
-        title_lbl = QLabel("MrBot1000 v2.0.20g")
+        title_lbl = QLabel("MrBot1000 v2.0.20h")
         title_lbl.setAlignment(Qt.AlignHCenter | Qt.AlignVCenter)
         title_lbl.setStyleSheet(
             "font-size:15px; font-weight:bold; padding:8px 0px; "
@@ -522,7 +537,7 @@ class MainWindow(QMainWindow):
         tabs.addTab(self.create_db_stats_tab(),    "DB Stats")
 
         # Auto-populate the Ollama model dropdowns the first time the Settings
-        # tab is opened, so you don't have to click Refresh manually (v2.0.20g).
+        # tab is opened, so you don't have to click Refresh manually (v2.0.20h).
         self._ollama_autorefresh_done = False
         self._settings_tab_index = tabs.indexOf(settings_tab)
         tabs.currentChanged.connect(self._on_tab_changed)
@@ -1493,7 +1508,7 @@ class MainWindow(QMainWindow):
 
     def _on_tab_changed(self, index: int):
         # Auto-populate the Ollama model dropdowns the first time the Settings
-        # tab is shown (v2.0.20g). Avoids requiring a manual Refresh click and
+        # tab is shown (v2.0.20h). Avoids requiring a manual Refresh click and
         # avoids re-querying Ollama on every tab switch.
         if self._ollama_autorefresh_done:
             return

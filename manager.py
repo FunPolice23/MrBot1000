@@ -41,9 +41,9 @@ _FOCUS_WORKER_MAP = {
     "job search": "JobSearch",
     "proposal quality": "Analyst",
     "code quality": "Coder",
-    "worker coordination": "Manager",
+    "worker coordination": "Coder",
     "error handling": "Analyst",
-    "agent speed": "Manager",
+    "agent speed": "Coder",
     "security": "Analyst",
     "revenue": "JobSearch",
 }
@@ -198,11 +198,12 @@ class ManagerThread(QThread):
         "No markdown fences. No other text."
     )
 
-    def __init__(self, api_key, worker, db=None):
+    def __init__(self, api_key, worker, db=None, earning_pipeline=None):
         super().__init__()
         self.api_key = api_key
         self.worker  = worker     # base WorkerAgent (Coder by default)
         self.db      = db
+        self.earning_pipeline = earning_pipeline  # optional EarningPipeline engine
         self.running = True
         self.paused  = False
 
@@ -409,9 +410,15 @@ class ManagerThread(QThread):
         '  "issue": "<concise description of what to change/check>",\n'
         '  "rationale": "<one line>"\n'
         "}\n"
-        "Rules: ONLY reference files that appear in the tree. If the directive names a "
-        "file NOT in the tree, set 'file' to null and operation to 'other'. "
-        "Return ONLY the JSON object."
+        "Rules:\n"
+        "  • ONLY reference files that appear in the tree. If the directive names a "
+        "file NOT in the tree, prefer the closest real file in the tree instead of null.\n"
+        "  • For any code-related directive (bug, refactor, improve, harden, audit), "
+        "set 'operation' to fix/refactor/analyze/audit and pick a REAL file from the "
+        "tree — do NOT use 'other' unless truly nothing applies.\n"
+        "  • For job-search directives, set 'operation' to 'search' and 'platform' to "
+        "fiverr/upwork/web.\n"
+        "  • Return ONLY the JSON object — no commentary."
     )
 
     def _plan_task(self, worker_name: str, action: str) -> dict:
@@ -511,6 +518,33 @@ class ManagerThread(QThread):
                                 f"Top: " + "; ".join(
                                     f"{g.title} (${g.budget})" for g in gigs[:3]))
                     ok = True
+                    # FEED ANALYST (P1, 2.0.20h): discovered gigs are the real
+                    # "proposals" the Analyst should analyze. Without this the
+                    # metrics store stays empty and generate_metrics_report() is
+                    # always 0. Evaluate each gig so later "proposal quality" /
+                    # "revenue" focuses have data to report. Guarded: Analyst may
+                    # be unavailable; never let this break the search result.
+                    analyst = self._roster.get("Analyst", {}).get("worker")
+                    if analyst is not None and hasattr(analyst, "analyze_proposal"):
+                        fed = 0
+                        for g in gigs:
+                            try:
+                                rec = {
+                                    "title": getattr(g, "title", ""),
+                                    "description": getattr(g, "description", "") or getattr(g, "title", ""),
+                                    "budget": float(getattr(g, "budget_usd", 0) or 0),
+                                    "skills": getattr(g, "skills", []),
+                                    "job_id": getattr(g, "id", ""),
+                                }
+                                analyst.analyze_proposal(
+                                    rec.get("description") or rec.get("title"),
+                                    proposal_id=rec.get("job_id") or f"gig_{fed}",
+                                )
+                                fed += 1
+                            except Exception as _feed_err:
+                                self._a_think(f"[Analyst] feed skipped: {_feed_err}")
+                        if fed:
+                            self._a_think(f"[Analyst] ingested {fed} discovered gig(s) for analysis")
                 else:
                     evidence = f"search('{plat}') returned 0 gigs (no matches / client error)"
                     ok = True  # executed successfully, just no results
@@ -994,13 +1028,43 @@ class ManagerThread(QThread):
                         f"environment, pick a different focus area to make progress.\n\n"
                     )
                 prompt += f"{context}"
-                self._full_cycle(f"Heartbeat: {focus[:30]}", prompt, context, focus)
+                self._full_cycle(f"Heartbeat: {focus[:80]}", prompt, context, focus)
                 self.agent_status.emit("Idle", "Ready")
                 last_heartbeat = now
 
                 # Process opportunity lifecycle
                 self._process_opportunities()
                 self._update_opportunity_metrics()
+
+                # Run the EarningPipeline discovery engine (P1, 2.0.20h) so it is
+                # actually exercised. Discovered opportunities are merged into the
+                # job queue (deduped) that _process_job_queue already handles.
+                # Guarded: if the pipeline is absent or errors, the heartbeat still
+                # proceeds — discovery failures must never break the loop.
+                if self.earning_pipeline is not None:
+                    try:
+                        opps = self.earning_pipeline.discover()
+                        merged = 0
+                        seen_titles = {j.get("title", "").lower() for j in self._job_queue}
+                        for o in opps:
+                            title = getattr(o, "title", "") or ""
+                            if title.lower() in seen_titles:
+                                continue
+                            self._job_queue.append({
+                                "title": title,
+                                "budget": float(getattr(o, "estimated_usd_value", 0) or 0),
+                                "description": getattr(o, "description", "") or "",
+                                "skills": [],
+                                "platform": getattr(o, "platform", "") or getattr(o, "source", ""),
+                                "url": getattr(o, "url", ""),
+                                "assigned_to": "Coder",
+                            })
+                            seen_titles.add(title.lower())
+                            merged += 1
+                        if merged:
+                            self._m_think(f"EarningPipeline discovered + queued {merged} opportunit(y/ies)")
+                    except Exception as _disc_err:
+                        self._m_think(f"EarningPipeline discover skipped: {_disc_err}")
 
                 # Log summary every 5 heartbeats
                 if self._heartbeat_count % 5 == 0:
