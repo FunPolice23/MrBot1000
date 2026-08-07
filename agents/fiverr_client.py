@@ -60,6 +60,9 @@ class FiverrClient:
     NOTE: Fiverr's RSS endpoints (…/rss/gigs/<cat>) return 404 as of 2026 and are
     dead. The working source is the HTML search results page
     (…/search/gigs?query=<q>), which returns gig cards we parse for title + link.
+    The gig listing data lives in an embedded JSON blob inside a <script> tag;
+    each gig object exposes 'title', 'gig_url', and 'price_i' (base package price
+    in USD). We parse those directly so callers get a REAL budget (not 0.0).
     """
 
     SEARCH_URL = "https://www.fiverr.com/search/gigs"
@@ -78,8 +81,11 @@ class FiverrClient:
     def _parse_search(self, query: str) -> List[dict]:
         """Fetch the Fiverr search results page and extract gig cards.
 
-        Returns a list of {title, link} dicts. Tolerant: if the page structure
-        changes or parsing yields nothing, returns [] (honest 'no results').
+        Returns a list of {title, link, price} dicts. The gig listing JSON is in
+        an inline <script> blob carrying both 'gig_url' and 'price_i'. We match
+        gig objects there for a real budget. If that blob is absent, we fall back
+        to a raw HTML link scan (price 0.0). Tolerant: any failure -> [] (honest
+        'no results').
         """
         try:
             resp = self.session.get(
@@ -89,28 +95,60 @@ class FiverrClient:
             self._last_error = str(e)
             return []
         html = resp.text
+
+        # Locate the gig-listing JSON blob (has gig_url + price_i).
+        scripts = re.findall(r"<script[^>]*>(.*?)</script>", html, re.S)
+        blob = ""
+        for s in scripts:
+            if '"gig_url"' in s and '"price_i"' in s:
+                blob = s
+                break
+
+        if not blob:
+            # Fallback: raw HTML link scan (no reliable price).
+            entries = []
+            for m in re.finditer(
+                    r'href="(/[^\"?]+/[^\"?]+)\?context_referrer=search_gigs', html):
+                path = m.group(1).lstrip("/")
+                parts = path.split("/")
+                slug = parts[1] if len(parts) > 1 else parts[0]
+                if not slug or len(slug) < 4:
+                    continue
+                entries.append({
+                    "title": slug.replace("-", " ").strip().title(),
+                    "link": "https://www.fiverr.com/" + path,
+                    "price": 0.0,
+                })
+            seen, uniq = set(), []
+            for e in entries:
+                if e["link"] in seen:
+                    continue
+                seen.add(e["link"])
+                uniq.append(e)
+            return uniq
+
+        # Each gig object carries title, gig_url, price_i (in that order).
+        pat = re.compile(
+            r'"title":"(?P<title>[^"]+)".*?'
+            r'"gig_url":"(?P<url>/[^"]+)".*?'
+            r'"price_i":(?P<price>\d+)', re.S)
         entries = []
-        # Gig links on the search results page look like
-        #   /<username>/<gig-slug>?context_referrer=search_gigs...
-        # Capture those specifically (avoids seller-profile / category noise).
-        for m in re.finditer(
-                r'href="(/[^"?]+/[^"?]+)\?context_referrer=search_gigs', html):
-            path = m.group(1).lstrip("/")
-            parts = path.split("/")
-            slug = parts[1] if len(parts) > 1 else parts[0]
-            if not slug or len(slug) < 4:
+        seen = set()
+        for m in pat.finditer(blob):
+            url = "https://www.fiverr.com" + m.group("url")
+            if url in seen:
                 continue
-            title = slug.replace("-", " ").strip().title()
-            link = "https://www.fiverr.com/" + path
-            entries.append({"title": title, "link": link})
-        # de-dup by link, keep order
-        seen, uniq = set(), []
-        for e in entries:
-            if e["link"] in seen:
-                continue
-            seen.add(e["link"])
-            uniq.append(e)
-        return uniq
+            seen.add(url)
+            try:
+                price = float(m.group("price"))
+            except (TypeError, ValueError):
+                price = 0.0
+            entries.append({
+                "title": m.group("title").replace("-", " ").strip().title(),
+                "link": url,
+                "price": price,
+            })
+        return entries
 
     def find_gigs(self, query: str = "python",
                   limit: int = 20) -> List[FiverrGig]:
@@ -128,10 +166,9 @@ class FiverrClient:
             gigs.append(FiverrGig(
                 id=str(hash(link)),
                 title=title[:200],
-                # description/budget/skills are not reliably scraped from the
-                # results page; left empty rather than fabricated.
                 description="",
-                budget_usd=0.0,
+                # Budget is now scraped from the listing JSON (price_i).
+                budget_usd=float(entry.get("price", 0.0) or 0.0),
                 skills=[],
                 url=link,
                 found_at=time.time(),
