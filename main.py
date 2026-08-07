@@ -184,7 +184,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("MrBot1000 v2.0.20a")
+        self.setWindowTitle("MrBot1000 v2.0.20b")
         self.resize(1450, 950)
         self.root_folder  = ROOT_FOLDER
         self._http_workers = []
@@ -499,7 +499,7 @@ class MainWindow(QMainWindow):
         container_layout.setContentsMargins(0, 0, 0, 0)
         container_layout.setSpacing(0)
 
-        title_lbl = QLabel("MrBot1000 v2.0.20a")
+        title_lbl = QLabel("MrBot1000 v2.0.20b")
         title_lbl.setAlignment(Qt.AlignHCenter | Qt.AlignVCenter)
         title_lbl.setStyleSheet(
             "font-size:15px; font-weight:bold; padding:8px 0px; "
@@ -516,14 +516,15 @@ class MainWindow(QMainWindow):
         tabs.addTab(self.create_file_browser_tab(),"Browse Root")
         tabs.addTab(self.create_payments_tab(),    "Payments")
         tabs.addTab(self.create_earnings_tab(),    "Earnings")
-        tabs.addTab(self.create_settings_tab(),    "Settings")
+        settings_tab = self.create_settings_tab()
+        tabs.addTab(settings_tab,                  "Settings")
         tabs.addTab(self.create_logs_tab(),        "Live Logs")
         tabs.addTab(self.create_db_stats_tab(),    "DB Stats")
 
         # Auto-populate the Ollama model dropdowns the first time the Settings
-        # tab is opened, so you don't have to click Refresh manually (v2.0.20a).
+        # tab is opened, so you don't have to click Refresh manually (v2.0.20b).
         self._ollama_autorefresh_done = False
-        self._settings_tab_index = tabs.indexOf(self.create_settings_tab())
+        self._settings_tab_index = tabs.indexOf(settings_tab)
         tabs.currentChanged.connect(self._on_tab_changed)
 
         # Chat handled in Agents tab
@@ -1492,7 +1493,7 @@ class MainWindow(QMainWindow):
 
     def _on_tab_changed(self, index: int):
         # Auto-populate the Ollama model dropdowns the first time the Settings
-        # tab is shown (v2.0.20a). Avoids requiring a manual Refresh click and
+        # tab is shown (v2.0.20b). Avoids requiring a manual Refresh click and
         # avoids re-querying Ollama on every tab switch.
         if self._ollama_autorefresh_done:
             return
@@ -1762,7 +1763,7 @@ if __name__ == "__main__":
         _crash_dir = Path.home() / ".local" / "share" / "mrbot1000"
         _crash_dir.mkdir(parents=True, exist_ok=True)
         _crash_path = _crash_dir / "crash.log"
-        with open(_crash_path, "w") as f:
+        with open(_crash_path, "w", encoding="utf-8") as f:
             f.write(_tb.format_exc())
         print(_tb.format_exc())
         print(f"\n[CRASH] Log written to: {_crash_path}")

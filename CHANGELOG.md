@@ -1,5 +1,36 @@
 # MrBot1000 v2.0 - CHANGELOG
 
+## [2.0.20b] - 2026-08-06 - CRITICAL: Fix MainWindow Launch Crash (status_label)
+
+### Bug fixed (blocked program launch)
+`MainWindow.__init__` crashed at line 301 with
+`RuntimeError: libshiboken: Internal C++ object (QLabel) already deleted`
+when calling `self.status_label.setText(...)`.
+
+**Root cause:** `create_ui()` (added in 2.0.15) called `self.create_settings_tab()`
+**twice** — once to add the tab (line 519) and again to read its index
+(`tabs.indexOf(self.create_settings_tab())`, line 526). The second call rebuilt
+the entire Settings tab, creating a *second* `status_label` QLabel that was
+never attached to a visible widget. `self.status_label` then pointed at that
+orphaned/deleted C++ object, so the first `setText` after UI build hit a deleted
+label.
+
+**Fix:** build the Settings tab once, store the reference (`settings_tab`), add
+it, and reuse that same object for `tabs.indexOf(settings_tab)`. `status_label`
+now resolves to the live, visible label.
+
+### Secondary fix
+The top-level crash handler wrote `crash.log` with the default encoding, which
+on this Windows host (cp1252) could not encode the `✓` in the traceback, raising
+`UnicodeEncodeError` *instead of* recording the real error. Now opens the file
+with `encoding="utf-8"`.
+
+### Verification
+Offscreen-Qt construction of `MainWindow()`: `create_settings_tab()` called
+exactly once; `self.status_label` is a live QLabel; `setText("…Registered ✓")`
+succeeds; settings tab index resolves (5). Program now launches past the
+previously-fatal line.
+
 ## [2.0.20a] - 2026-08-06 - Model Env-Var Precedence Fix (patch)
 
 ### Bugs fixed

@@ -1,16 +1,28 @@
-# \MrBot1000\agents\.py
+# MrBot1000/agents/base_worker.py — Core LLM integration & worker utilities
+"""
+WorkerAgent provides base functionality for all MrBot1000 subagents:
+- LLM calling with multiple provider fallback (OpenAI -> Anthropic -> Ollama)
+- Secure file I/O operations
+- Research and file scanning utilities
+- Shared context integration via _get_shared_context()
+"""
+
 import os
+import re
 import time
+import json
+import sqlite3
 import mimetypes
 from pathlib import Path
+from typing import Dict, List, Optional, Any
 import shutil
-import datetime
+
 try:
-    from groq import Groq
+    from groq import Groq as GroqClient
     GROQ_AVAILABLE = True
 except (ImportError, ModuleNotFoundError, OSError):
     GROQ_AVAILABLE = False
-    Groq = None
+    GroqClient = None
 
 try:
     import ollama
@@ -40,21 +52,27 @@ except (ImportError, ModuleNotFoundError, OSError, Exception):
     _REQUESTS_AVAILABLE = False
     _requests = None
 
-ROOT_FOLDER = str(Path(__file__).resolve().parent.parent)
+ROOT_FOLDER = str(Path(__file__).resolve().parent.parent)  # project root (2.0.19)
 MAX_FILE_SIZE = 500 * 1024 * 1024  # 500 MB
 
-# Directories the Coder/agents must NEVER write into (even though they live
-# inside ROOT_FOLDER). Prevents clobbering VCS metadata, virtualenvs, caches,
-# and the external publish mirror. Backups live under .mrbot_backups instead.
+# Directories that must never be written into by safe_write_file (2.0.19).
 WRITE_EXCLUSION_DIRS = {
     ".git", "__pycache__", ".venv", "venv", "node_modules",
     ".pytest_cache", "build", "dist", ".mypy_cache",
-    ".hermes", "github_upload", "test_results", ".mrbot_backups",
+    # Non-required / external folders the agents must not overwrite:
+    ".hermes", "test_results", "github_upload", ".mrbot_backups",
+    # Deliverable workspaces are writable but excluded from the planner tree:
+    "work",
 }
 
-# Directory where pre-edit backups are kept (relative to ROOT_FOLDER) so any
-# edit is revertible / recoverable.
-BACKUP_DIRNAME = ".mrbot_backups"
+# Directories excluded from project_file_tree() so the planner only sees real,
+# stable source files (2.0.19).
+_CODEBASE_INDEX_SKIP_DIRS = WRITE_EXCLUSION_DIRS | {
+    ".github", "references", "skills", "scripts", "tests", "docs",
+}
+
+# Registry of worker classes by name (populated by manager registration).
+WORKER_REGISTRY = {}
 
 # Security blocklist – filenames that should never be read/written
 FILENAME_BLOCKLIST = {
@@ -71,22 +89,37 @@ MAX_TOKENS = int(os.getenv("MAX_TOKENS", 1024))
 BLOCKED_MIME_TYPES = {"application/x-executable", "application/x-sharedlib",
                       "application/x-object", "application/x-dosexec"}
 
-
-def is_safe_path(base: Path, candidate: Path) -> bool:
-    """Ensure candidate is inside base and not a symlink pointing outside."""
-    try:
-        candidate = candidate.resolve()
-        base = base.resolve()
-        if not str(candidate).startswith(str(base)):
-            return False
-        # No symlinks that escape the base
-        if candidate.is_symlink():
-            target = candidate.resolve()
-            if not str(target).startswith(str(base)):
+# Python 3.9+ for is_relative_to
+try:
+    def is_safe_path(base: Path, candidate: Path) -> bool:
+        """Ensure candidate is inside base and not a symlink pointing outside."""
+        try:
+            candidate = candidate.resolve()
+            base = base.resolve()
+            if not candidate.is_relative_to(base):
                 return False
-        return True
-    except Exception:
-        return False
+            if candidate.is_symlink():
+                target = candidate.resolve()
+                if not target.is_relative_to(base):
+                    return False
+            return True
+        except Exception:
+            return False
+except AttributeError:
+    # Fallback for Python < 3.9
+    def is_safe_path(base: Path, candidate: Path) -> bool:
+        try:
+            candidate = candidate.resolve()
+            base = base.resolve()
+            if not str(candidate).startswith(str(base)):
+                return False
+            if candidate.is_symlink():
+                target = candidate.resolve()
+                if not str(target).startswith(str(base)):
+                    return False
+            return True
+        except Exception:
+            return False
 
 
 def is_safe_filename(name: str) -> bool:
@@ -99,15 +132,31 @@ def is_safe_filename(name: str) -> bool:
 
 
 def is_safe_mime(file_path: Path) -> bool:
-    """Heuristic mime‑type check – only allow text‑like files."""
+    """Heuristic mime-type check – only allow text-like files."""
     mime, _ = mimetypes.guess_type(str(file_path))
     if mime and mime in BLOCKED_MIME_TYPES:
         return False
-    # Even if unknown, allow reading – the content will be checked for binary
     return True
 
 
+def fingerprint(s: str) -> str:
+    """Generate a short unique ID for a string."""
+    import hashlib
+    return hashlib.md5(s.encode()).hexdigest()[:16]
+
+
+def ts_now() -> str:
+    """Return ISO timestamp."""
+    from datetime import datetime
+    return datetime.now().isoformat()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  WorkerAgent
+# ─────────────────────────────────────────────────────────────────────────────
 class WorkerAgent:
+    """Base class for MrBot1000 subagents with LLM integration and secure I/O."""
+    
     def __init__(self, api_key: str, log_signal, db=None,
                  ollama_model: str | None = None,
                  chat_ollama_model: str | None = None,
@@ -121,9 +170,19 @@ class WorkerAgent:
         self.last_provider = None
         self.last_model = None
         self.chat_model = None
+        self._shared_context = None
+        self._last_action = ""
+        self._running = True
         # Model overrides: instance > env
         self._ollama_model_override = primary_ollama_model or ollama_model
         self._chat_ollama_model_override = chat_ollama_model
+
+    def _get_shared_context(self):
+        """Lazy-load shared context for cross-model communication"""
+        if self._shared_context is None:
+            from agents.shared_context import get_shared_context
+            self._shared_context = get_shared_context()
+        return self._shared_context
 
     def _chat_model_effective(self) -> str | None:
         chat_model = self._chat_ollama_model_override or os.getenv("OLLAMA_CHAT_MODEL", "").strip() or None
@@ -149,11 +208,10 @@ class WorkerAgent:
         except Exception:
             return []
 
-    def llm(self, system: str, user: str, *, chat: bool = False, **kwargs) -> str:
-        """Call LLM with retries, multiple providers, and max_tokens.
+    # ── LLM Methods ────────────────────────────────────────────────────────────
 
-        chat=True prefers the chat-specific Ollama model if configured.
-        """
+    def llm(self, system: str, user: str, *, chat: bool = False, **kwargs) -> str:
+        """Call LLM with retries, multiple providers, and max_tokens."""
         max_tokens = kwargs.get("max_tokens", MAX_TOKENS)
         providers = []
 
@@ -169,8 +227,8 @@ class WorkerAgent:
         if os.getenv("DISABLE_OLLAMA", "false").lower() != "true" and OLLAMA_AVAILABLE:
             # Main model: prefer the live instance override (set by the UI /
             # save_settings), then OLLAMA_MAIN_MODEL, then OLLAMA_MODEL as a
-            # legacy fallback. NOTE: OLLAMA_MAIN_MODEL is the canonical var
-            # (see .env + save_settings); OLLAMA_MODEL is only a fallback.
+            # legacy fallback. OLLAMA_MAIN_MODEL is the canonical var (see
+            # .env + save_settings); OLLAMA_MODEL is only a fallback (2.0.20a).
             env_model = (self._ollama_model_override
                          or os.getenv("OLLAMA_MAIN_MODEL", "").strip()
                          or os.getenv("OLLAMA_MODEL", "llama3.2"))
@@ -205,7 +263,7 @@ class WorkerAgent:
         self.last_provider = "error"
         return "ERROR: LLM unavailable"
 
-    def _call_openai(self, model: str, system: str, user: str, max_tokens: int) -> str:
+    def _call_openai(self, model: str, system: str, user: str, max_tokens: int, chat: bool = False) -> str:
         if not OPENAI_AVAILABLE or not openai or not os.getenv("OPENAI_API_KEY"):
             raise RuntimeError("OpenAI not available")
         client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -218,7 +276,7 @@ class WorkerAgent:
             max_tokens=max_tokens,
         ).choices[0].message.content
 
-    def _call_anthropic(self, model: str, system: str, user: str, max_tokens: int) -> str:
+    def _call_anthropic(self, model: str, system: str, user: str, max_tokens: int, chat: bool = False) -> str:
         if not ANTHROPIC_AVAILABLE or not Anthropic or not os.getenv("ANTHROPIC_API_KEY"):
             raise RuntimeError("Anthropic not available")
         client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
@@ -242,14 +300,6 @@ class WorkerAgent:
                     options["num_gpu"] = int(chat_gpu)
                 else:
                     options["num_gpu"] = 0
-            # keep_alive: pin the model in VRAM for a bounded idle TTL (seconds)
-            # instead of -1 (permanent). Permanent pinning on a single-GPU box
-            # keeps BOTH models resident and causes RuntimeError contention
-            # when the main model is under load (see live-log analysis 2.0.16).
-            # OLLAMA_KEEP_ALIVE=0 would unload immediately (higher latency);
-            # a TTL lets Ollama evict under memory pressure while staying warm.
-            ka = os.getenv("OLLAMA_KEEP_ALIVE", "300").strip()
-            options["keep_alive"] = int(ka) if ka.lstrip("-").isdigit() else 300
             self.log_signal.emit(
                 f"[LLM] ollama request model={model} mode={'chat' if chat else 'main'} "
                 f"options={options}"
@@ -262,6 +312,10 @@ class WorkerAgent:
                     {"role": "user", "content": user}
                 ],
                 options=options,
+                # TTL (not permanent pin): let Ollama evict under VRAM pressure.
+                # Fixed in 2.0.16 (Bug B) — keep_alive=-1 pinned the model in
+                # VRAM and caused RuntimeError on a 6GB GPU.
+                keep_alive=os.getenv("OLLAMA_KEEP_ALIVE", "300"),
             )['message']['content']
             dt = time.time() - t0
             self.log_signal.emit(
@@ -272,38 +326,36 @@ class WorkerAgent:
         except Exception as e:
             raise RuntimeError(f"Ollama model '{model}' failed: {e}")
 
+    # ── File Operations ───────────────────────────────────────────────────────
+
     def safe_write_file(self, filename: str, content: str) -> bool:
         """Write a file safely inside ROOT_FOLDER only, with a pre-edit backup.
 
-        Safety layers (defence-in-depth, no hallucinations / no clobbering):
-          1. Filename blocklist (.env, credentials, etc.)
-          2. Resolve path; reject anything outside ROOT_FOLDER or unsafe symlink
-          3. Reject writes into protected dirs (.git, .venv, caches, mirror…)
-          4. Back up the EXISTING file before overwriting (revertible)
-          5. Size + free-space guards
+        2.0.19: backs up any existing target to ROOT_FOLDER/.mrbot_backups/
+        before overwriting, and refuses protected/write-excluded directories.
         """
         if not is_safe_filename(filename):
             self.log_signal.emit(f"BLOCKED: filename '{filename}' is on blocklist")
             return False
 
         root_resolved = Path(ROOT_FOLDER).resolve()
-        # If filename is already absolute (e.g. manager passed a resolved path),
-        # Path(root / abs) yields abs; still validated below against root.
-        full_path = (root_resolved / filename).resolve()
+        # Accept absolute paths that live under root; otherwise treat as relative.
+        candidate = Path(filename)
+        full_path = (candidate if candidate.is_absolute()
+                     else (root_resolved / filename)).resolve()
+
+        # Write-excluded directories (VCS, venvs, caches, publish mirror, backups).
+        rel_parts = full_path.relative_to(root_resolved).parts if str(full_path).startswith(str(root_resolved)) else ()
+        if any(part in WRITE_EXCLUSION_DIRS for part in rel_parts):
+            self.log_signal.emit(f"BLOCKED: write to protected dir '{'/'.join(rel_parts)}'")
+            return False
 
         if not is_safe_path(root_resolved, full_path):
             self.log_signal.emit("BLOCKED: Write outside root folder or unsafe symlink")
             return False
 
-        # Never write into protected directories.
-        if any(part in WRITE_EXCLUSION_DIRS for part in full_path.parts):
-            self.log_signal.emit(f"BLOCKED: write into protected dir forbidden: {full_path}")
-            return False
-
         if len(content) > self.max_file_size:
-            self.log_signal.emit(
-                f"BLOCKED: File size exceeds {self.max_file_size // 1024 // 1024}MB"
-            )
+            self.log_signal.emit(f"BLOCKED: File size exceeds {self.max_file_size // 1024 // 1024}MB")
             return False
 
         _, _, free = shutil.disk_usage(ROOT_FOLDER)
@@ -311,21 +363,22 @@ class WorkerAgent:
             self.log_signal.emit("BLOCKED: Free space < 100MB")
             return False
 
-        # ── Backup BEFORE overwrite (revertible / recoverable) ──
-        if full_path.exists() and full_path.is_file():
-            try:
-                rel = full_path.relative_to(root_resolved)
-            except ValueError:
-                rel = Path(full_path.name)
-            ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            backup_path = root_resolved / BACKUP_DIRNAME / (str(rel) + f".{ts}.bak")
+        # Backup-before-edit (2.0.19): keep a recoverable copy of the original.
+        try:
+            backup_root = root_resolved / BACKUP_DIRNAME
+            backup_root.mkdir(parents=True, exist_ok=True)
+            rel = full_path.relative_to(root_resolved)
+            stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_path = backup_root / f"{rel}.{stamp}.bak"
             backup_path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(full_path, backup_path)
-            self.log_signal.emit(f"BACKED UP before edit: {backup_path}")
-        elif not full_path.parent.exists():
-            full_path.parent.mkdir(parents=True, exist_ok=True)
+            if full_path.exists():
+                shutil.copy2(full_path, backup_path)
+                self.log_signal.emit(f"Backed up -> {backup_path}")
+        except Exception as e:
+            self.log_signal.emit(f"Backup skipped: {e}")
 
         try:
+            full_path.parent.mkdir(parents=True, exist_ok=True)
             full_path.write_text(content, encoding="utf-8")
             self.log_signal.emit(f"Created safely: {filename}")
             return True
@@ -334,40 +387,31 @@ class WorkerAgent:
             return False
 
     def restore_last_backup(self, filename: str) -> bool:
-        """Revert a file to its most recent pre-edit backup (.bak).
-
-        Returns True if a backup was found and restored, False otherwise.
-        Used to recover from a bad autonomous edit.
-        """
+        """Restore the most recent .bak backup for `filename` (relative to root)."""
         root_resolved = Path(ROOT_FOLDER).resolve()
-        full_path = (root_resolved / filename).resolve()
-        if any(part in WRITE_EXCLUSION_DIRS for part in full_path.parts):
-            self.log_signal.emit("BLOCKED: cannot restore into protected dir")
-            return False
+        rel = Path(filename)
         backup_root = root_resolved / BACKUP_DIRNAME
-        try:
-            rel = full_path.relative_to(root_resolved)
-        except ValueError:
-            rel = Path(full_path.name)
-        # Backups are stored as "<relative_path>.<timestamp>.bak"
         prefix = str(rel).replace("\\", "/") + "."
         backups = []
         if backup_root.exists():
-            for p in backup_root.rglob("*.bak"):
+            for p in backup_root.iterdir():
                 nm = p.name
                 if nm.startswith(prefix) and nm.endswith(".bak"):
                     backups.append(p)
         if not backups:
-            self.log_signal.emit(f"No backup found for: {filename}")
+            self.log_signal.emit(f"No backup found for '{filename}'")
             return False
         latest = max(backups, key=lambda p: p.stat().st_mtime)
+        target = (root_resolved / rel).resolve()
         try:
-            shutil.copy2(latest, full_path)
-            self.log_signal.emit(f"RESTORED from backup: {latest} -> {full_path}")
+            shutil.copy2(latest, target)
+            self.log_signal.emit(f"Restored {target} from {latest}")
             return True
         except Exception as e:
-            self.log_signal.emit(f"Restore error: {e}")
+            self.log_signal.emit(f"Restore failed: {e}")
             return False
+
+    # ── Research Methods (used by Manager) ────────────────────────────────────
 
     def research_all(self) -> dict:
         """Scan ROOT_FOLDER (.py files) and user-selected research_folder."""
@@ -410,13 +454,13 @@ class WorkerAgent:
                         continue
 
                     if not is_safe_filename(p.name):
-                        skipped_unsafe.append(p.name)
+                        skipped_unsafe.append(str(p.relative_to(rf)))
                         continue
                     if not is_safe_mime(p):
-                        skipped_ext.append(p.name)
+                        skipped_ext.append(str(p.relative_to(rf)))
                         continue
                     if p.suffix.lower() not in allowed_ext:
-                        skipped_ext.append(p.name)
+                        skipped_ext.append(str(p.relative_to(rf)))
                         continue
 
                     size = p.stat().st_size
@@ -427,51 +471,32 @@ class WorkerAgent:
                     rel = p.relative_to(rf)
                     rel_path = rel.as_posix()
 
-                    # Try cache
-                    cached = None
-                    if self.db:
-                        cached = self.db.get_cached_file(str(rf), rel_path,
-                                                          RESEARCH_MAX_CHARS,
-                                                          current_mtime=p.stat().st_mtime)
-                    if cached:
-                        research_parts.append(cached)
-                        research_file_count += 1
-                        continue
-
-                    # Read from disk
                     try:
                         content = p.read_text(encoding="utf-8", errors="ignore")
                         display_content = content[:RESEARCH_MAX_CHARS]
-                        research_parts.append(
-                            f"[{rel.as_posix()}] ({size} bytes)\n{display_content}\n---"
-                        )
+                        research_parts.append(f"[{rel.as_posix()}] ({size} bytes)\n{display_content}\n---")
                         research_file_count += 1
-
-                        if self.db:
-                            mtime = p.stat().st_mtime
-                            self.db.save_file_to_cache(str(rf), rel_path,
-                                                       content, size, mtime)
                     except Exception as fe:
                         self.log_signal.emit(f"Skipped {p.name}: {fe}")
+
+                if research_parts:
+                    research_text = "\n".join(research_parts)
+                    msg = f"Research scan: {research_file_count} file(s) from {rf}"
+                    if skipped_unsafe:
+                        msg += f" | skipped {len(skipped_unsafe)} unsafe file(s)"
+                    if skipped_large:
+                        msg += f" | skipped {len(skipped_large)} large file(s)"
+                    if skipped_ext:
+                        msg += f" | skipped {len(skipped_ext)} unsupported type(s)"
+                    self.log_signal.emit(msg)
+                else:
+                    research_text = (
+                        f"(no supported files found in {rf} — "
+                        f"supported: {', '.join(sorted(allowed_ext))})"
+                    )
+                    self.log_signal.emit(f"Research scan: 0 files found in {rf}")
             except Exception as e:
                 self.log_signal.emit(f"Error scanning research folder: {e}")
-
-            if research_parts:
-                research_text = "\n".join(research_parts)
-                msg = f"Research scan: {research_file_count} file(s) from {rf}"
-                if skipped_unsafe:
-                    msg += f" | skipped {len(skipped_unsafe)} unsafe file(s)"
-                if skipped_large:
-                    msg += f" | skipped {len(skipped_large)} large file(s): {', '.join(skipped_large[:5])}"
-                if skipped_ext:
-                    msg += f" | skipped {len(skipped_ext)} unsupported type(s)"
-                self.log_signal.emit(msg)
-            else:
-                research_text = (
-                    f"(no supported files found in {rf} — "
-                    f"supported: {', '.join(sorted(allowed_ext))})"
-                )
-                self.log_signal.emit(f"Research scan: 0 files found in {rf}")
 
         return {
             "root": root_text,
@@ -479,6 +504,36 @@ class WorkerAgent:
             "research_path": rf,
             "research_file_count": research_file_count
         }
+
+    def file_index(self) -> str:
+        """Return a compact index of all files in the research folder."""
+        rf = self.research_folder
+        if not rf or not Path(rf).exists():
+            return f"(research folder not set or does not exist: {rf})"
+
+        allowed_ext = {".py", ".txt", ".md", ".json", ".yaml", ".yml",
+                       ".toml", ".cfg", ".ini", ".rst", ".csv"}
+        lines = [f"Research folder: {rf}", "Files (relative path, size):"]
+        count = 0
+        try:
+            for p in sorted(Path(rf).rglob("*")):
+                if not p.is_file():
+                    continue
+                if not is_safe_filename(p.name):
+                    continue
+                if p.suffix.lower() not in allowed_ext:
+                    continue
+                try:
+                    size = p.stat().st_size
+                    rel_path = p.relative_to(rf).as_posix()
+                    lines.append(f"{rel_path} ({size} bytes)")
+                    count += 1
+                except Exception:
+                    pass
+        except Exception as e:
+            self.log_signal.emit(f"Error indexing research folder: {e}")
+
+        return "\n".join(lines) + f"\n\nTotal: {count} files"
 
     def read_specific_files(self, filenames: list, base_path: str = None) -> str:
         """Read full content of specific files by relative path."""
@@ -496,7 +551,6 @@ class WorkerAgent:
                 self.log_signal.emit(f"BLOCKED read outside base: {name}")
                 continue
 
-            # Check if file exists before trying to stat it
             if not p.exists():
                 self.log_signal.emit(f"File not found: {name}")
                 parts.append(f"[{name}] ERROR: file not found\n---")
@@ -507,134 +561,58 @@ class WorkerAgent:
                 continue
 
             try:
-                rel = p.relative_to(base).as_posix()
-            except ValueError:
-                rel = name
-
-            # Get mtime only after confirming existence
-            mtime = p.stat().st_mtime
-
-            cached = None
-            if self.db:
-                cached = self.db.get_cached_file(folder_path, rel,
-                                                  DEEP_READ_MAX_CHARS,
-                                                  current_mtime=mtime)
-            if cached:
-                parts.append(cached)
-                continue
-
-            try:
                 size = p.stat().st_size
                 content = p.read_text(encoding="utf-8", errors="ignore")
                 display_content = content[:DEEP_READ_MAX_CHARS]
                 parts.append(f"[{name}] ({size} bytes)\n{display_content}\n---")
-
-                if self.db:
-                    # mtime already obtained
-                    self.db.save_file_to_cache(folder_path, rel, content, size, mtime)
             except Exception as e:
                 parts.append(f"[{name}] ERROR: {e}\n---")
 
         return "\n".join(parts) if parts else "(no files read)"
 
-    def file_index(self) -> str:
-        """Return a compact index of all files in the research folder."""
-        rf = self.research_folder
-        if not rf or not Path(rf).exists():
-            return "(research folder not set or does not exist)"
+    # ── State Management ─────────────────────────────────────────────────────
 
-        allowed_ext = {".py", ".txt", ".md", ".json", ".yaml", ".yml",
-                       ".toml", ".cfg", ".ini", ".rst", ".csv"}
-        lines = [f"Research folder: {rf}", "Files (relative path, size):"]
-        count = 0
-        try:
-            for p in sorted(Path(rf).rglob("*")):
-                if not p.is_file():
-                    continue
-                if not is_safe_filename(p.name):
-                    continue
-                if p.suffix.lower() not in allowed_ext:
-                    continue
-                try:
-                    size = p.stat().st_size
-                    rel_path = p.relative_to(rf).as_posix()
-                    lines.append(f"  {rel_path}  ({size:,} bytes)")
-                    count += 1
-                except Exception:
-                    pass
-        except Exception as e:
-            return f"(error reading index: {e})"
-        lines.append(f"\nTotal: {count} file(s)")
-        return "\n".join(lines)
+    def set_research_folder(self, path: str):
+        """Set the research folder path."""
+        self.research_folder = path
 
-    def _load_prompt_file(self, filename: str) -> str:
-        """Load prompt/instruction text from the project folder safely."""
-        base = Path(ROOT_FOLDER).resolve().parent
-        target = (base / filename).resolve()
-        if not is_safe_path(base, target):
-            return ""
-        if not target.exists() or not target.is_file():
-            return ""
-        try:
-            return target.read_text(encoding="utf-8", errors="ignore")
-        except Exception:
-            return ""
+    def stop(self):
+        """Signal the worker to stop running."""
+        self._running = False
 
-    def build_prompt_with_context(self, skill: str = "") -> str:
-        """Build a runtime prompt from Agent.md plus requested skill file."""
-        base = Path(ROOT_FOLDER).resolve().parent
-        agent_prompt = self._load_prompt_file("Agent.md")
-        skill_prompt = ""
-        if skill:
-            skill_rel = Path("skills") / skill
-            skill_prompt = self._load_prompt_file(str(skill_rel))
-        parts = [p for p in [agent_prompt, skill_prompt] if p]
-        return "\n\n---\n\n".join(parts)
-
-# ── Worker registry (populated by each agent module's register_worker) ────────
-WORKER_REGISTRY: Dict[str, type] = {}
-
-
-# Real project file tree (excludes heavy/vendor dirs). Used to ground subagent
-# prompts so the model stops hallucinating non-existent files like source.py.
-# Also excludes publish/mirror/working dirs the program never needs to see.
-_CODEBASE_INDEX_SKIP_DIRS = {
-    ".git", "__pycache__", ".venv", "venv", "node_modules",
-    ".pytest_cache", "build", "dist", ".mypy_cache",
-    # Non-required / external folders the agents must not see or edit:
-    "github_upload",   # external publish mirror (lives at D:/github_upload)
-    ".hermes",         # Hermes agent tooling state
-    "test_results",    # local test-run artifacts
-    "work",            # per-task deliverable workspaces (see agents/task_workspace.py)
-}
-
+    def is_running(self) -> bool:
+        """Check if the worker is still running."""
+        return self._running
 
 def project_file_tree(max_files: int = 200) -> str:
-    """Return a compact tree (relative paths, sizes) of the real project root.
+    """Return a grounded text tree of real project files for the planner.
 
-    This is the single source of truth for subagents. Any file NOT listed here
-    does not exist -- agents must not invent filenames.
+    2.0.19: excludes write-excluded / non-required dirs so the Coder/CEO
+    planner only references files that actually exist (no hallucinations).
+    The deliverable workspace (work/) is excluded so the agent never tries
+    to edit its own outputs. Module-level (imported by manager.py).
     """
-    lines = [f"Project root: {ROOT_FOLDER}", "", "Files (relative path, size bytes):"]
-    count = 0
     try:
+        lines = ["Project file tree (rooted at project root):"]
+        count = 0
         for pp in sorted(Path(ROOT_FOLDER).rglob("*")):
-            if not pp.is_file():
+            try:
+                parts = set(pp.parts)
+            except Exception:
                 continue
-            if any(part in _CODEBASE_INDEX_SKIP_DIRS for part in pp.parts):
+            if any(part in _CODEBASE_INDEX_SKIP_DIRS for part in parts):
                 continue
-            if pp.suffix.lower() not in {
+            if pp.is_file() and pp.suffix.lower() in {
                 ".py", ".md", ".txt", ".json", ".yaml", ".yml"
             }:
-                continue
-            relative_path = str(pp.relative_to(Path(ROOT_FOLDER)))
-            size = pp.stat().st_size
-            lines.append(f"{relative_path}: {size}")
-            count += 1
-        if count == 0:
-            lines.append("No relevant files found.")
+                try:
+                    rel = pp.relative_to(Path(ROOT_FOLDER))
+                except Exception:
+                    continue
+                lines.append(str(rel).replace("\\", "/"))
+                count += 1
+                if count >= max_files:
+                    break
+        return "\n".join(lines)
     except Exception as e:
-        error_message = f"Error generating project file tree: {e}"
-        print(error_message)
-        lines.append(f"ERROR: {error_message}")
-    return chr(10).join(lines)
+        return f"[file tree error] {e}"
