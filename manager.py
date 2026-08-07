@@ -486,7 +486,7 @@ class ManagerThread(QThread):
                 pass
         return None
 
-    def _execute_with_worker(self, worker_name: str, action: str, context: str) -> str:
+    def _execute_with_worker(self, worker_name: str, action: str, context: str) -> tuple:
         info = self._roster.get(worker_name, self._roster.get("Coder"))
         w = info["worker"] if isinstance(info, dict) else self.worker
 
@@ -641,7 +641,7 @@ class ManagerThread(QThread):
                 self.db.log_action(trigger=action, action_text=result_text)
         except Exception as _log_err:
             self.log.emit(f"Action stats log skipped: {_log_err}")
-        return result_text
+        return result_text, ok, None
 
     def _fulfill_job(self, plan: dict, action: str, worker_name: str) -> str:
         """Create work/<platform>/<job_id>/ and complete the gig's deliverable.
@@ -733,7 +733,7 @@ class ManagerThread(QThread):
                 self._last_actions.pop(0)
 
             self._heartbeat_metrics["successful"] += 1
-            result_text = self._execute_with_worker(worker_name, action, context)
+            result_text, _ok, _proposal = self._execute_with_worker(worker_name, action, context)
             # Track per-focus consecutive failures so the CEO can pivot instead
             # of re-issuing a task that yields nothing (2.0.20g).
             self._record_focus_outcome(focus, result_text)
