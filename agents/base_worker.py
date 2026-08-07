@@ -281,7 +281,15 @@ class WorkerAgent:
 
     def llm(self, system: str, user: str, *, chat: bool = False, **kwargs) -> str:
         """Call LLM with retries, multiple providers, and max_tokens."""
-        max_tokens = kwargs.get("max_tokens", MAX_TOKENS)
+        # v2.0.21 P3#6: read MAX_TOKENS live from env (or instance override) so the
+        # Settings "Max Tokens" knob applies immediately after Save (no restart).
+        # The module-level MAX_TOKENS is only the import-time default.
+        if "max_tokens" in kwargs:
+            max_tokens = kwargs["max_tokens"]
+        elif getattr(self, "_max_tokens", None) is not None:
+            max_tokens = self._max_tokens
+        else:
+            max_tokens = int(os.getenv("MAX_TOKENS", MAX_TOKENS))
         providers = []
 
         # OpenAI: use when available and not disabled
@@ -320,6 +328,25 @@ class WorkerAgent:
                     t0 = time.time()
                     resp = func(model, system, user, max_tokens, chat=chat)
                     dt_ms = int((time.time() - t0) * 1000)
+                    # v2.0.21 P1#2: an empty response (chars=0) is a failure, not
+                    # a success. The logs showed the chat model returning empty
+                    # bodies, which forced the "heuristic fallback (planner
+                    # failed)" path. Treat empty as retryable so a later attempt
+                    # (or fallback provider) can produce real output.
+                    if not resp or not str(resp).strip():
+                        self.log_signal.emit(f"[LLM] {name} returned empty — retrying")
+                        try:
+                            if self.db is not None:
+                                self.db.log_llm_call(
+                                    model=model, provider=name,
+                                    trigger=getattr(self, "last_trigger", "llm"),
+                                    prompt_chars=len(system) + len(user),
+                                    response_chars=0, latency_ms=dt_ms,
+                                    error="empty response")
+                        except Exception:
+                            pass
+                        # fall through to retry (next provider / attempt)
+                        continue
                     # Persist the call so the DB Stats tab can show it (2.0.20e).
                     # Guarded: logging must never break the LLM result.
                     try:

@@ -1,13 +1,21 @@
-# MrBot1000 - Earning Pipeline Agent
-"""
-MrBot1000: Real-time earning pipeline with multi-tiered memory system.
+# Agent implementations for MrBot1000
+# Note: Agents are imported directly in main.py and manager.py
+# using from agents.<module> import <class> syntax
 
-This package provides:
-- Earning discovery from social platforms, freelance sites, airdrops, DeFi
-- Multi-tiered memory for opportunity tracking and learning
-- Direct pipeline execution: discover → evaluate → filter → execute → track
-- Local Ollama integration with optional cloud provider fallback
-"""
+from .airdrop_scanner import AirdropScanner, AirdropOpportunity
+from .base_worker import WorkerAgent
+from .coordinator import CoordinatorWorker
+from .job_search_worker import JobSearchWorker
+from .shared_context import SharedContext
+from .social_earning_platform import SocialEarningPlatform
 
-__version__ = "2.0.0"
-__author__ = "MrBot1000 Team"
+__all__ = [
+    'WorkerAgent',
+    'SummarizerThread',
+    'CoordinatorWorker',
+    'JobSearchWorker',
+    'SharedContext',
+    'AirdropScanner',
+    'AirdropOpportunity',
+    'SocialEarningPlatform',
+]

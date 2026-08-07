@@ -34,6 +34,10 @@ TEST_CATEGORIES = {
         'description': 'Health and functionality tests',
         'tests': ['test_analyst_metrics', 'test_job_evaluation', 'test_coordinator']
     },
+    'security': {
+        'description': 'v2.0.22 security: instruction gate + trust boundary',
+        'tests': ['test_instruction_gate', 'test_trust_boundary']
+    },
     'integration': {
         'description': 'Integration test bundles',
         'tests': ['run_full_suite', 'run_quick_check']
@@ -102,6 +106,10 @@ def run_test(test_name: str) -> tuple:
         return test_job_evaluation()
     elif test_name == 'test_coordinator':
         return test_coordinator()
+    elif test_name == 'test_instruction_gate':
+        return test_instruction_gate()
+    elif test_name == 'test_trust_boundary':
+        return test_trust_boundary()
     elif test_name == 'run_quick_check':
         return run_tests(['check_syntax', 'test_imports', 'test_analyst_worker'])
     elif test_name == 'run_full_suite':
@@ -186,6 +194,31 @@ def test_main() -> tuple:
     except Exception as e:
         import traceback
         return False, f"Import error: {e}"
+
+
+def run_unittest_file(filename: str) -> tuple:
+    """Run a unittest-style test file from the tests/ directory."""
+    import unittest
+    path = os.path.join(os.path.dirname(__file__), filename)
+    if not os.path.exists(path):
+        return False, f"Test file not found: {filename}"
+    suite = unittest.TestLoader().discover(
+        start_dir=os.path.dirname(path), pattern=filename)
+    res = unittest.TextTestRunner(verbosity=0).run(suite)
+    if res.wasSuccessful():
+        return True, f"{filename}: {res.testsRun} tests passed"
+    failures = [str(f[1]) for f in res.failures] + [str(e[1]) for e in res.errors]
+    return False, f"{filename}: {len(failures)} failure(s)\n" + "\n".join(failures[:5])
+
+
+def test_instruction_gate() -> tuple:
+    """v2.0.22: instruction provenance gate (quarantine/allow/block)."""
+    return run_unittest_file("test_instruction_gate.py")
+
+
+def test_trust_boundary() -> tuple:
+    """v2.0.22: high-trust action boundary + platform adapter shape."""
+    return run_unittest_file("test_trust_boundary.py")
 
 
 def test_analyst_worker() -> tuple:

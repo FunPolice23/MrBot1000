@@ -1,5 +1,89 @@
 # MrBot1000 v2.0 - CHANGELOG
 
+## [2.0.22] - 2026-08-07 - Security-First: Instruction Provenance Gate + Trust Boundary + Platform Adapter Skeleton
+
+Per operator directive: run on ANY hardware (6GB Zen3 DDR4 → modern RTX) with ANY
+Ollama model; switchable to vLLM / added cloud later. Model SIZE is not a concern,
+so the v2.0.21 P1#3 "large model" / "main==chat VRAM" heuristics are REMOVED (only
+"model unset" warnings remain).
+
+### S1 — Instruction Provenance Gate (security trust anchor)
+New `agents/instruction_gate.py` + DB tables (`instruction_quarantine`,
+`instruction_allowlist`, `instruction_blacklist`). Any external instruction/playbook
+(e.g. a remote `SKILL.md`) is treated as **UNTRUSTED DATA, never an agent directive**
+(prompt-injection defense). `fetch_instruction()`:
+- blacklisted URL → `blocked`, **no network call**;
+- allowlisted URL → `allowed` (re-fetched, trusted);
+- unknown → fetched, stored as `pending`, returned with `trusted=False` (never auto-run);
+- content hash reuse mirrors a prior human review.
+`review(id, approve)` → allowlist (approve) or blacklist (reject: `url + skill.md +
+content_hash` persisted as `related` so it is ALWAYS ignored).
+
+### S2 — High-trust action boundary
+New `agents/trust_boundary.py`. Defines `HIGH_TRUST_ACTIONS` (create_account,
+set_password, login, post, send_message, send_funds, download_exec, submit_proposal,
+grant_oauth) that **always require human confirmation** and can NEVER be authorized
+by an untrusted instruction. AI-policy awareness: platforms tagged `ai_disallowed`
+keep ALL mutating actions human-in-the-loop regardless of model.
+
+### S3 — Platform Adapter skeleton
+New `agents/platforms/` package: `PlatformAdapter` ABC with
+`fetch_instructions()` (routes through the gate) and `execute_action()` (enforces the
+trust boundary). Concrete stubs: `FiverrAdapter` (ai_allowed, submit=high-trust) and
+`RedditAdapter` (ai_disallowed example). Real auth/OAuth deferred (needs credentials).
+
+### S4 — UI Review Queue
+DB Stats tab gains an "Instruction Review Queue" group: pending list with Approve /
+Reject(blacklist) buttons + counts. MainWindow wires `self.instruction_gate` at
+startup. This is the human-in-the-loop surface for quarantined instructions.
+
+### S5 — Housekeeping
+README + version strings → v2.0.22. Plan: `plans/v2.0.22-security-first.md`.
+
+## [2.0.21] - 2026-08-07 - Reliability + Observability: Dep Check, Empty-LLM Retry, Model Warn, Proposal Persistence
+
+### P1#1 — Startup dependency check
+`_check_dependencies()` imports every package pinned in `requirements.txt` at
+boot and emits a clear `[Startup] WARN: missing deps -> feedparser (...)` instead
+of dying mid-run. This explains the live log `[Reddit] Feed error: No module named
+'feedparser'` — the running instance launched under a Python without `feedparser`,
+so Reddit/LinkedIn discovery was silently disabled. Now the operator sees exactly
+which feature is off.
+
+### P1#2 — Empty-LLM-response retry
+`base_worker.llm()` now treats an empty response (`chars=0`) as a failure and
+retries (up to the existing 3 attempts / fallback providers) instead of returning
+`""`. This removes the `chars=0 -> heuristic fallback (planner failed)` chain that
+fed the CoderWorker AttributeError crash. Empty attempts are logged as errors.
+
+### P1#3 — Model/config validation at startup
+`_validate_model_config()` warns (never crashes) when: OLLAMA_MAIN_MODEL /
+OLLAMA_CHAT_MODEL is unset; main == chat (VRAM co-run risk on the GTX 1660S);
+or the chat model looks like a large main-class model (>=~9B). Surfaces the
+spec drift seen in the logs (MAIN=ornith:9b, CHAT=gemma-4-E2B).
+
+### P2#4 — Persist drafted proposals
+New `proposals` table in `agent.db` (`add_proposal` / `get_proposals` /
+`count_proposals`). When the Manager dispatches "Prepare a proposal for this gig",
+the draft is saved with gig title/platform/budget, so work survives restart and is
+visible in DB Stats.
+
+### P2#5 — Surface EarningPipeline discoveries in DB Stats
+The Manager now caches a lightweight discovery summary each heartbeat
+(`get_discovery_summary()`); `refresh_db_stats()` shows `Proposals: N` and
+`Discovered: TOTAL (queued Q) [source:count ...]` so the discovery engine's output
+is observable, not just Fiverr.
+
+### P3#6 — Max Tokens knob applies live
+Settings "Max Tokens" now takes effect immediately on Save (no restart): `llm()`
+reads `MAX_TOKENS` from env/instance override at call time, and `save_settings`
+updates `worker._max_tokens` live. Lets you trade the 122s/decision latency for
+speed without editing code.
+
+### P3#7 — Housekeeping
+README + version strings bumped to 2.0.21. (Memory/spec model sync is left to the
+operator — see P1#3 warnings; the running config differs from the saved spec.)
+
 ## [2.0.20h] - 2026-08-07 - Full-Scope Review Fixes: Analyst Data + Earning Pipeline Lives + Focus Map
 
 ### P1 — Analyst pipeline was a dead end (proposals always 0)

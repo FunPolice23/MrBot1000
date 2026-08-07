@@ -92,6 +92,47 @@ class AgentDB:
                 value TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS proposals (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts           REAL    NOT NULL,
+                gig_title    TEXT,
+                platform     TEXT,
+                budget_usd   REAL,
+                draft        TEXT    NOT NULL,
+                status       TEXT    DEFAULT 'drafted'
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_proposals_ts ON proposals(ts);
+
+            -- v2.0.22 S1: instruction provenance gate (untrusted external playbooks)
+            CREATE TABLE IF NOT EXISTS instruction_quarantine (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts           REAL    NOT NULL,
+                url          TEXT    NOT NULL,
+                kind         TEXT    DEFAULT 'skill.md',
+                title        TEXT,
+                content_hash TEXT    NOT NULL,
+                content      TEXT    NOT NULL,
+                status       TEXT    DEFAULT 'pending'  -- pending|allowed|blocked
+            );
+
+            CREATE TABLE IF NOT EXISTS instruction_allowlist (
+                url          TEXT PRIMARY KEY,
+                content_hash TEXT,
+                title        TEXT,
+                approved_at  REAL    NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS instruction_blacklist (
+                url          TEXT PRIMARY KEY,
+                content_hash TEXT,
+                related      TEXT,    -- related identifiers (url + skill.md + related)
+                rejected_at  REAL    NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_inst_q_status ON instruction_quarantine(status);
+            CREATE INDEX IF NOT EXISTS idx_inst_q_hash   ON instruction_quarantine(content_hash);
+
             CREATE INDEX IF NOT EXISTS idx_thoughts_ts   ON thoughts(ts);
             CREATE INDEX IF NOT EXISTS idx_llm_calls_ts  ON llm_calls(ts);
             CREATE INDEX IF NOT EXISTS idx_actions_ts    ON actions(ts);
@@ -197,8 +238,113 @@ class AgentDB:
         return [dict(r) for r in rows]
 
     # ------------------------------------------------------------------
-    # Research cache
+    # Drafted proposals (v2.0.21 P2#4)
     # ------------------------------------------------------------------
+    def add_proposal(self, gig_title: str = None, platform: str = None,
+                     budget_usd: float = 0.0, draft: str = "",
+                     status: str = "drafted") -> int:
+        """Persist a drafted gig proposal so work survives restart and shows in
+        DB Stats. Returns the new row id."""
+        cur = self._execute(
+            """INSERT INTO proposals
+               (ts, gig_title, platform, budget_usd, draft, status)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (time.time(), gig_title, platform, float(budget_usd or 0), draft, status),
+            commit=True
+        )
+        return cur.lastrowid
+
+    def get_proposals(self, limit: int = 100) -> list[dict]:
+        rows = self._execute(
+            """SELECT id, ts, gig_title, platform, budget_usd, status
+               FROM proposals ORDER BY ts DESC LIMIT ?""",
+            (limit,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def count_proposals(self) -> int:
+        row = self._execute("SELECT COUNT(*) AS n FROM proposals").fetchone()
+        return int(row["n"]) if row else 0
+
+    # ------------------------------------------------------------------
+    # Instruction provenance gate (v2.0.22 S1): untrusted external playbooks
+    # discovered on platforms (e.g. remote SKILL.md). Never executed until a
+    # human approves; rejected -> blacklisted (always ignored).
+    # ------------------------------------------------------------------
+    def in_instruction_allowlist(self, url: str) -> bool:
+        row = self._execute(
+            "SELECT 1 FROM instruction_allowlist WHERE url=?", (url,)
+        ).fetchone()
+        return row is not None
+
+    def in_instruction_blacklist(self, url: str) -> bool:
+        row = self._execute(
+            "SELECT 1 FROM instruction_blacklist WHERE url=?", (url,)
+        ).fetchone()
+        return row is not None
+
+    def add_quarantined_instruction(self, url: str, kind: str, title: str,
+                                    content_hash: str, content: str) -> int:
+        cur = self._execute(
+            """INSERT INTO instruction_quarantine
+               (ts, url, kind, title, content_hash, content, status)
+               VALUES (?, ?, ?, ?, ?, ?, 'pending')""",
+            (time.time(), url, kind, title, content_hash, content),
+            commit=True
+        )
+        return cur.lastrowid
+
+    def find_quarantined_by_hash(self, content_hash: str) -> dict | None:
+        row = self._execute(
+            "SELECT * FROM instruction_quarantine WHERE content_hash=? "
+            "ORDER BY id DESC LIMIT 1",
+            (content_hash,)
+        ).fetchone()
+        return dict(row) if row else None
+
+    def review_instruction(self, quarantine_id: int, approve: bool,
+                           url: str = "", content_hash: str = "",
+                           related: str = "") -> str:
+        """Move a pending instruction to allowed (allowlist) or blocked
+        (blacklist). Returns the resulting status string."""
+        now = time.time()
+        if approve:
+            self._execute(
+                "UPDATE instruction_quarantine SET status='allowed' WHERE id=?",
+                (quarantine_id,), commit=True)
+            self._execute(
+                """INSERT OR REPLACE INTO instruction_allowlist
+                   (url, content_hash, title, approved_at)
+                   VALUES (?, ?, '', ?)""",
+                (url, content_hash, now), commit=True)
+            return "allowed"
+        else:
+            self._execute(
+                "UPDATE instruction_quarantine SET status='blocked' WHERE id=?",
+                (quarantine_id,), commit=True)
+            self._execute(
+                """INSERT OR REPLACE INTO instruction_blacklist
+                   (url, content_hash, related, rejected_at)
+                   VALUES (?, ?, ?, ?)""",
+                (url, content_hash, related, now), commit=True)
+            return "blocked"
+
+    def list_pending_instructions(self, limit: int = 100) -> list[dict]:
+        rows = self._execute(
+            "SELECT id, ts, url, kind, title, content_hash, status "
+            "FROM instruction_quarantine WHERE status='pending' "
+            "ORDER BY ts DESC LIMIT ?",
+            (limit,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def count_instruction_lists(self) -> dict:
+        q = self._execute("SELECT COUNT(*) n FROM instruction_quarantine").fetchone()
+        a = self._execute("SELECT COUNT(*) n FROM instruction_allowlist").fetchone()
+        b = self._execute("SELECT COUNT(*) n FROM instruction_blacklist").fetchone()
+        return {"quarantined": int(q["n"]), "allowed": int(a["n"]),
+                "blocked": int(b["n"]), "pending": len(self.list_pending_instructions())}
+
     def save_research_cache(self, research: dict):
         folder = research.get("research_path") or "root_only"
         self._execute(

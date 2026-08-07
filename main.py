@@ -184,7 +184,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("MrBot1000 v2.0.20h")
+        self.setWindowTitle("MrBot1000 v2.0.22")
         self.resize(1450, 950)
         self.root_folder  = ROOT_FOLDER
         self._http_workers = []
@@ -216,6 +216,15 @@ class MainWindow(QMainWindow):
             )
         except Exception as _ep_err:
             self.log_signal.emit(f"[Startup] EarningPipeline unavailable: {_ep_err}")
+
+        # v2.0.22 S1: Instruction Provenance Gate — single trust anchor for any
+        # external playbook/SKILL.md fetched by platform adapters.
+        try:
+            from agents.instruction_gate import InstructionGate
+            self.instruction_gate = InstructionGate(self.db)
+        except Exception as _ig_err:
+            self.instruction_gate = None
+            self.log_signal.emit(f"[Startup] InstructionGate unavailable: {_ig_err}")
 
         ollama_chat  = os.getenv("OLLAMA_CHAT_MODEL", "").strip() or None
         ollama_main  = os.getenv("OLLAMA_MAIN_MODEL", "").strip() or os.getenv("OLLAMA_MODEL", "").strip() or None
@@ -319,9 +328,92 @@ class MainWindow(QMainWindow):
             self.thought_panel.route(t["source"], f"[history] {t['text']}")
         self.thought_panel.route("System",
                                  f"Agent started. Root: {ROOT_FOLDER}")
+        # v2.0.21 P1#1: verify runtime deps at boot so a missing package (e.g.
+        # feedparser in a different Python env) shows a clear warning instead of
+        # silently killing discovery mid-run.
+        self._check_dependencies()
+        # v2.0.21 P1#3: surface model-config issues at startup (no crash).
+        # Runs here (after thought_panel exists) so warnings can be routed.
+        self._validate_model_config(ollama_main, ollama_chat)
         self.thought_panel.route("System", "Research folder: not set")
 
         QTimer.singleShot(600, self.refresh_db_stats)
+
+    # ── v2.0.21 P1#1: startup dependency check ────────────────────────────────
+    def _check_dependencies(self):
+        """Import every package pinned in requirements.txt; warn (never crash) on
+        a missing one so the app boots and the operator sees WHICH feature is
+        disabled (e.g. feedparser -> Reddit/LinkedIn discovery off)."""
+        req_path = os.path.join(ROOT_FOLDER, "requirements.txt")
+        if not os.path.exists(req_path):
+            self.thought_panel.route("System", "[Startup] WARN: requirements.txt not found")
+            return
+        missing = []
+        # distribution-name -> import-name (they differ for some packages)
+        import_aliases = {
+            "beautifulsoup4": "bs4",
+            "python-dotenv": "dotenv",
+            "pyyaml": "yaml",
+            "pillow": "PIL",
+            "lxml": "lxml",
+            "python-dateutil": "dateutil",
+        }
+        with open(req_path, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line or line.startswith("#") or line.startswith("-"):
+                    continue
+                # strip version specifiers / extras: "pkg[extra]>=1.2" -> "pkg"
+                pkg = line.split(">=")[0].split("==")[0].split("<")[0].split("~")[0].split("[")[0].strip()
+                if not pkg:
+                    continue
+                mod = import_aliases.get(pkg, pkg)
+                try:
+                    __import__(mod)
+                except Exception:
+                    missing.append(pkg)
+        if missing:
+            msg = ("[Startup] WARN: missing deps -> " + ", ".join(missing) +
+                   " (related discovery/features disabled)")
+            # If CORE packages (the ones main.py itself needs to even run) are
+            # missing, the app was almost certainly launched with the wrong
+            # interpreter (e.g. `py` -> system Python, not the venv). Say so
+            # explicitly instead of just listing packages.
+            core = {"PySide6", "ollama", "python-dotenv", "requests"}
+            if core & set(missing):
+                msg += (" | CORE packages missing — you are likely running the "
+                        "wrong Python. Launch with the venv interpreter, e.g. "
+                        "venv/Scripts/python.exe main.py")
+            self.thought_panel.route("System", msg)
+            print(msg)
+        else:
+            self.thought_panel.route("System", "[Startup] Dependencies OK")
+
+    # ── v2.0.21 P1#3: startup model-config validation ────────────────────────
+    def _validate_model_config(self, main_model: str | None, chat_model: str | None):
+        """Emit clear startup warnings about model configuration problems.
+        Never crashes — purely advisory so the operator can fix config."""
+        def warn(msg):
+            full = f"[Startup] MODEL WARN: {msg}"
+            # Defensive: thought_panel may not exist if called early.
+            panel = getattr(self, "thought_panel", None)
+            if panel is not None:
+                try:
+                    panel.route("System", full)
+                except Exception:
+                    pass
+            print(full)
+
+        if not main_model:
+            warn("OLLAMA_MAIN_MODEL is not set — falling back to default 'llama3.2'. "
+                 "Set OLLAMA_MAIN_MODEL in .env for the intended model.")
+        if not chat_model:
+            warn("OLLAMA_CHAT_MODEL is not set — chat will use the main model. "
+                 "Set OLLAMA_CHAT_MODEL in .env for a lighter chat model.")
+        # NOTE (v2.0.22): the previous "large model" / "main==chat VRAM" heuristics
+        # were removed — model SIZE and co-location are intentionally operator-
+        # controlled (any model on any hardware: 6GB Zen3 → modern RTX, Ollama or
+        # other local/cloud providers). See plans/v2.0.22-security-first.md.
 
     def closeEvent(self, event):
         try:
@@ -514,7 +606,7 @@ class MainWindow(QMainWindow):
         container_layout.setContentsMargins(0, 0, 0, 0)
         container_layout.setSpacing(0)
 
-        title_lbl = QLabel("MrBot1000 v2.0.20h")
+        title_lbl = QLabel("MrBot1000 v2.0.22")
         title_lbl.setAlignment(Qt.AlignHCenter | Qt.AlignVCenter)
         title_lbl.setStyleSheet(
             "font-size:15px; font-weight:bold; padding:8px 0px; "
@@ -1194,6 +1286,28 @@ class MainWindow(QMainWindow):
         calls_layout.addWidget(self.db_calls_edit)
         lay.addWidget(calls_group, stretch=1)
 
+        # v2.0.22 S4: Instruction Review Queue (provenance gate)
+        review_group = QGroupBox("Instruction Review Queue (untrusted SKILL.md)")
+        review_layout = QVBoxLayout(review_group)
+        review_layout.setContentsMargins(12, 12, 12, 12)
+        review_layout.setSpacing(6)
+        self.review_counts_label = QLabel("Pending: 0  Allowed: 0  Blocked: 0")
+        self.review_counts_label.setStyleSheet("color:#ffb74d;font-size:12px;")
+        review_layout.addWidget(self.review_counts_label)
+        self.review_list = QListWidget()
+        self.review_list.setStyleSheet(
+            "font-family:Consolas,Monaco,monospace;font-size:11px;")
+        review_layout.addWidget(self.review_list)
+        rbtns = QHBoxLayout()
+        self.review_approve_btn = QPushButton("Approve selected")
+        self.review_reject_btn = QPushButton("Reject (blacklist) selected")
+        self.review_approve_btn.clicked.connect(lambda: self._review_selected(True))
+        self.review_reject_btn.clicked.connect(lambda: self._review_selected(False))
+        rbtns.addWidget(self.review_approve_btn)
+        rbtns.addWidget(self.review_reject_btn)
+        review_layout.addLayout(rbtns)
+        lay.addWidget(review_group, stretch=1)
+
         # Auto-refresh timer
         self._db_stats_timer = QTimer(self)
         self._db_stats_timer.timeout.connect(self.refresh_db_stats)
@@ -1236,13 +1350,28 @@ class MainWindow(QMainWindow):
     def refresh_db_stats(self):
         try:
             stats = self.db.get_llm_stats()
-            self.db_stats_label.setText(
-                f"Calls: {stats.get('total_calls',0)}  "
-                f"OK: {stats.get('successes',0)}  "
-                f"Err: {stats.get('errors',0)}  "
-                f"Avg: {int(stats.get('avg_latency_ms') or 0)}ms  "
-                f"Chars: {int(stats.get('total_chars') or 0):,}"
-            )
+            props = self.db.count_proposals()
+            disc = {}
+            if getattr(self.manager, "earning_pipeline", None) is not None:
+                try:
+                    disc = self.manager.get_discovery_summary()
+                except Exception:
+                    disc = {}
+            parts = [
+                f"Calls: {stats.get('total_calls',0)}",
+                f"OK: {stats.get('successes',0)}",
+                f"Err: {stats.get('errors',0)}",
+                f"Avg: {int(stats.get('avg_latency_ms') or 0)}ms",
+                f"Chars: {int(stats.get('total_chars') or 0):,}",
+                f"Proposals: {props}",
+            ]
+            self.db_stats_label.setText("  ".join(parts))
+            # v2.0.21 P2#5: show last EarningPipeline discovery snapshot
+            if disc.get("total"):
+                by_src = " ".join(f"{k}:{v}" for k, v in disc.get("by_source", {}).items())
+                self.db_stats_label.setText(
+                    self.db_stats_label.text()
+                    + f"  | Discovered: {disc['total']} (queued {disc.get('queued',0)}) [{by_src}]")
             self.db_actions_list.clear()
             for a in self.db.get_recent_actions(20):
                 ts = self.db.ts_to_str(a["ts"])
@@ -1257,8 +1386,65 @@ class MainWindow(QMainWindow):
                     f"{str(c['model'])[:24]:24} "
                     f"{str(c['latency_ms'] or 0):>5}ms {status}")
             self.db_calls_edit.setPlainText("\n".join(lines))
+            # v2.0.22 S4: refresh the Instruction Review Queue
+            self._refresh_review_queue()
         except Exception as e:
             self.db_stats_label.setText(f"DB error: {e}")
+
+    def _refresh_review_queue(self):
+        """Populate the review queue list + counts from the instruction gate."""
+        try:
+            gate = getattr(self, "instruction_gate", None)
+            if gate is None:
+                return
+            counts = gate.counts()
+            self.review_counts_label.setText(
+                f"Pending: {counts.get('pending',0)}  "
+                f"Allowed: {counts.get('allowed',0)}  "
+                f"Blocked: {counts.get('blocked',0)}")
+            self.review_list.clear()
+            for it in gate.pending(50):
+                title = it.get("title") or it.get("url")
+                self.review_list.addItem(
+                    f"[#{it['id']}] {title}  ({it.get('kind','skill.md')})")
+        except Exception as e:
+            self.review_counts_label.setText(f"Review queue error: {e}")
+
+    def _review_selected(self, approve: bool):
+        """Human-in-the-loop decision on the selected pending instruction."""
+        gate = getattr(self, "instruction_gate", None)
+        if gate is None:
+            return
+        item = self.review_list.currentItem()
+        if not item:
+            return
+        # Parse the id from "[#ID] ..." 
+        text = item.text()
+        import re as _re
+        m = _re.match(r"\[#(\d+)\]", text)
+        if not m:
+            return
+        qid = int(m.group(1))
+        # Resolve the quarantine row to get url + hash for the allow/blacklist.
+        row = None
+        for it in gate.pending(200):
+            if it["id"] == qid:
+                row = it
+                break
+        if row is None:
+            return
+        # related: persist url + skill.md + content_hash so it is ALWAYS ignored.
+        related = f"{row.get('url','')} | skill.md | {row.get('content_hash','')}"
+        try:
+            status = gate.review(qid, approve, url=row.get("url", ""),
+                                 content_hash=row.get("content_hash", ""),
+                                 related=related)
+            self.log_signal.emit(
+                f"[Review] instruction #{qid} -> {status} "
+                f"({'APPROVED' if approve else 'BLACKLISTED'})")
+        except Exception as e:
+            self.log_signal.emit(f"[Review] error: {e}")
+        self._refresh_review_queue()
 
     def _run_http(self, method, url, tag, **kwargs):
         w = HttpWorker(method, url, tag, **kwargs)
@@ -1627,6 +1813,11 @@ class MainWindow(QMainWindow):
         self.worker.max_file_size = self.max_file_spin.value() * 1024 * 1024
         self.manager.HEARTBEAT_INTERVAL = self.polling_spin.value()
         self.manager._research_cache_ttl = self.research_cache_ttl_spin.value()
+        # v2.0.21 P3#6: apply Max Tokens knob live (no restart).
+        try:
+            self.worker._max_tokens = int(self.max_tokens_spin.value())
+        except Exception:
+            pass
         if hasattr(self, "agents_tab"):
             self.agents_tab.heartbeat_label.setText(
                 f"Heartbeat every {self.polling_spin.value()}s")

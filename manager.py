@@ -204,6 +204,7 @@ class ManagerThread(QThread):
         self.worker  = worker     # base WorkerAgent (Coder by default)
         self.db      = db
         self.earning_pipeline = earning_pipeline  # optional EarningPipeline engine
+        self._last_discovery = {"ts": 0.0, "total": 0, "by_source": {}, "queued": 0}
         self.running = True
         self.paused  = False
 
@@ -549,8 +550,12 @@ class ManagerThread(QThread):
                     evidence = f"search('{plat}') returned 0 gigs (no matches / client error)"
                     ok = True  # executed successfully, just no results
 
-            elif worker_name == "Analyst" or operation in ("analyze", "audit"):
-                # Real metrics / evaluation
+            elif worker_name == "Analyst":
+                # Real metrics / evaluation — ONLY the Analyst worker owns this
+                # tool. Previously the condition also matched operation in
+                # ("analyze","audit"), which let a CoderWorker dispatched with an
+                # "analyze"/"audit" plan reach generate_metrics_report() and crash
+                # with AttributeError. (2.0.20h follow-up)
                 self._a_think(f"[Analyst] TOOL-CALL: generate_metrics_report() — real analysis")
                 report = w.generate_metrics_report()
                 if isinstance(report, dict):
@@ -838,7 +843,25 @@ class ManagerThread(QThread):
             f"Skills: {', '.join(job.get('skills',[]))}"
         )
         self._job_queue.pop(0)
-        self._execute_with_worker(free_w, task, "")
+        result_text = self._execute_with_worker(free_w, task, "")
+        # v2.0.21 P2#4: persist the drafted proposal so the work survives restart
+        # and is visible in DB Stats. Guarded: DB may be None in tests/headless.
+        if getattr(self, "db", None) is not None:
+            try:
+                self.db.add_proposal(
+                    gig_title=job.get("title", "") or None,
+                    platform=job.get("platform", "") or None,
+                    budget_usd=float(job.get("budget", 0) or 0),
+                    draft=str(result_text or ""),
+                    status="drafted",
+                )
+                self._m_think(f"[Proposal] saved draft for: {job.get('title','')[:50]}")
+            except Exception as _prop_err:
+                self._m_think(f"[Proposal] save skipped: {_prop_err}")
+
+    def get_discovery_summary(self) -> dict:
+        """v2.0.21 P2#5: last EarningPipeline discovery snapshot for DB Stats."""
+        return dict(self._last_discovery)
 
     # ── Opportunity Lifecycle Integration ────────────────────────────────────
 
@@ -1044,11 +1067,38 @@ class ManagerThread(QThread):
                 if self.earning_pipeline is not None:
                     try:
                         opps = self.earning_pipeline.discover()
+                        # v2.0.21 P2#5: cache a lightweight discovery summary so the
+                        # DB Stats tab can show what was found (without re-running the
+                        # slow discover() on every stats refresh).
+                        summary = {}
+                        for o in opps:
+                            src = (getattr(o, "source", "") or getattr(o, "platform", "") or "unknown")
+                            summary[src] = summary.get(src, 0) + 1
+                        self._last_discovery = {
+                            "ts": time.time(),
+                            "total": len(opps),
+                            "by_source": summary,
+                            "queued": 0,
+                        }
                         merged = 0
                         seen_titles = {j.get("title", "").lower() for j in self._job_queue}
                         for o in opps:
                             title = getattr(o, "title", "") or ""
                             if title.lower() in seen_titles:
+                                continue
+                            # Only route REAL job gigs (Fiverr/Upwork) into the
+                            # JobSearch worker queue. Social/airdrop/defi/microtask/
+                            # content/dynamic sources are not actionable coding
+                            # "gigs" — pushing them (e.g. "Twitter Job: q") just
+                            # makes the Coder refuse them and wastes a cycle. Those
+                            # opportunities remain tracked in the EarningPipeline's
+                            # own DB/lifecycle; they simply don't enter the worker
+                            # task queue. (2.0.20h follow-up)
+                            o_type = (getattr(o, "type", "") or "").lower()
+                            o_src = (getattr(o, "source", "") or "").lower()
+                            o_plat = (getattr(o, "platform", "") or "").lower()
+                            if o_type != "gig" or o_src not in ("fiverr", "upwork") \
+                                    and "fiverr" not in o_plat and "upwork" not in o_plat:
                                 continue
                             self._job_queue.append({
                                 "title": title,
@@ -1061,6 +1111,7 @@ class ManagerThread(QThread):
                             })
                             seen_titles.add(title.lower())
                             merged += 1
+                        self._last_discovery["queued"] = merged
                         if merged:
                             self._m_think(f"EarningPipeline discovered + queued {merged} opportunit(y/ies)")
                     except Exception as _disc_err:
