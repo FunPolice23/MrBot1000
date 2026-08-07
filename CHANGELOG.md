@@ -1,5 +1,48 @@
 # MrBot1000 v2.0 - CHANGELOG
 
+## [2.0.23d] - 2026-08-07 - Web Provider + Proposal Deduplication
+
+### Feature: configurable web search provider
+The JobSearch `search('web')` branch previously did `from library import web_search`,
+but `library.py` never defined `web_search` — so every heartbeat logged a misleading
+`WARN: cannot import name 'web_search' from 'library'` and returned 0 gigs. Replaced
+with `agents/web_provider.py`: a configurable, local-first provider.
+
+- `WEB_PROVIDER` (.env): `ddgs` (default, **free, no API key**) | `tavily` | `brave` | `none`.
+- `ddgs` installed in the venv and added to `requirements.txt`. Verified: returns 5
+  normalized `{title,url,snippet}` results for a real query.
+- Optional keyed providers wired (`TAVILY_API_KEY`, `BRAVE_API_KEY`) for later upgrade.
+- **Graceful degrade**: if the provider is unconfigured / SDK missing / network errors,
+  `search()` returns `[]` and prints ONE clear `[WebProvider]` line — never raises into
+  the heartbeat loop, never the old misleading import-error WARN.
+- `.env.example` gained the `WEB_PROVIDER` / `WEB_SEARCH_MAX_RESULTS` / key blocks.
+
+### Bug: proposal drafts duplicated every heartbeat
+The job queue re-discovers the same Fiverr/Upwork gigs each cycle (by design, deduped
+against the in-flight queue). But `_process_job_queue` called `db.add_proposal(...)` for
+every gig every heartbeat with no dedup, so DB Stats "proposals" grew by ~19 rows per
+cycle and ballooned without bound.
+
+Fix (`manager.py` + `database.py`):
+- `AgentDB.proposal_exists(title, platform)` does a cheap indexed lookup.
+- Save site now skips the insert (logs `[Proposal] draft already saved ... skip dup`)
+  when a draft already exists for that title+platform; still regenerates the proposal
+  TEXT fresh each cycle.
+
+### Long-run log review (3 heartbeats) — prior fixes confirmed holding
+- v2.0.23b proposal-as-text: every gig → `generate_proposal_text()` → `[Proposal] saved
+  draft`; zero main.py rewrite attempts, zero truncation-guard refusals.
+- Coder self-destruction guard: caught 2 real attempts this run
+  (`analyze_and_fix('agents/coder.py')`, focus-area `refactor source.py`) → BLOCKED before
+  any LLM/disk write, returned clean `[Coder] Ready`. The guard still earns its keep.
+- v2.0.23c chat routing + 3-tuple hotfix: no crashes through the full cycle.
+
+### Minor observations (NOT changed — per user, not issues yet)
+- JobSearch still runs a `search('web')` PLAN step each heartbeat even though real gigs
+  come from EarningPipeline; now harmless (web provider is real + graceful).
+- Coder still emits a discarded `main.py`/`refactor` PLAN before the proposal short-circuit
+  (~2 wasted chat calls/gig). Left as-is; uniform planning retained.
+
 ## [2.0.23c] - 2026-08-07 - Chat: Stop Hijacking Replies with Task Results
 
 ### Bug: chat ignored the user's question and recited agent task results

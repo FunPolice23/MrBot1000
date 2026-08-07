@@ -21,7 +21,6 @@ The system operates with specialized agents sharing state through `SharedContext
 | Agent | Role | Model | Color |
 |-------|------|-------|-------|
 | Manager | Coordinator & intent classifier | Main (gemma-4-E2B) | #bb86fc (purple) |
-| Coordinator | Cross-model communication | Main | #a855f7 (fuchsia) |
 | Summarizer | Chat & conversation | Chat (LFM2.5-1.2B) | #00b0ff (cyan) |
 | Coder | Code modification (actual file writes) | Main | #84cc16 (green) |
 | Analyst | Code review & proposal analysis | Main | #3b82f6 (blue) |
@@ -188,7 +187,7 @@ MrBot1000/
     ├── summarizer.py         # Chat agent (handles SummarizerThread)
     ├── job_search_worker.py  # Job discovery (REAL client: FiverrClient, UpworkClient)
     ├── analyst_worker.py     # Proposal analysis (IMPLEMENTED)
-    ├── coordinator.py        # Cross-model coordination
+    ├── web_provider.py       # v2.0.23d configurable web search provider
     ├── shared_context.py     # Shared state JSON file
     ├── opportunity_lifecycle.py  # Lifecycle state machine
     ├── fiverr_client.py      # Fiverr RSS-based gig discovery

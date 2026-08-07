@@ -9,5 +9,5 @@ This package provides:
 - Local Ollama integration with optional cloud provider fallback
 """
 
-__version__ = "2.0.23c"
+__version__ = "2.0.23d"
 __author__ = "MrBot1000 Team"

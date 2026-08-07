@@ -361,20 +361,17 @@ class JobSearchWorker(WorkerAgent):
         
         # Web search fallback for other platforms (explicit "web" + any other active platform)
         elif platform == "web" or platform in self.ACTIVE_PLATFORMS:
-            # `web_search` is provided by the host environment and is NOT importable
-            # inside this standalone app process. Import it lazily and bail honestly
-            # if absent, so we never emit a misleading "Found 0 new jobs" for a
-            # search that never actually ran.
+            # v2.0.23d: configurable web provider (agents/web_provider.py).
+            # Reads WEB_PROVIDER from .env (ddgs by default - free, no key).
+            # Degrades gracefully to [] if unconfigured / SDK missing / network
+            # error - never raises into the heartbeat, and never emits the old
+            # misleading "cannot import name 'web_search' from 'library'" WARN.
             try:
-                from library import web_search
-            except Exception as e:
-                self._logger.warn(f"Web search unavailable in this environment: {e}")
-                return []
-            try:
+                from agents.web_provider import search as web_search_provider
                 query = f"{skill_str} freelance {platform.lower()}"
                 self._logger.info(f"Web searching: {query}")
-                results = web_search(query, limit=5)
-                for r in results[:5]:
+                results = web_search_provider(query)
+                for r in results:
                     title = r.get("title", "")
                     url = r.get("url", "")
                     if title and url:
@@ -382,7 +379,7 @@ class JobSearchWorker(WorkerAgent):
                             job_id=fingerprint(platform + title),
                             platform=platform,
                             title=title[:120],
-                            description=r.get("description", "")[:800],
+                            description=r.get("snippet", "")[:800],
                             budget=100.0,
                             skills=[skill_str.split(",")[0]],
                             url=url

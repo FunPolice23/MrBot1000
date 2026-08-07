@@ -863,15 +863,29 @@ class ManagerThread(QThread):
         # (generated text), not an "REFUSED" edit record. Guarded: DB may be
         # None in tests/headless.
         if getattr(self, "db", None) is not None:
+            _gig_title = job.get("title", "") or None
+            _platform = job.get("platform", "") or None
             try:
-                self.db.add_proposal(
-                    gig_title=job.get("title", "") or None,
-                    platform=job.get("platform", "") or None,
-                    budget_usd=float(job.get("budget", 0) or 0),
-                    draft=str(proposal_text or ""),
-                    status="drafted",
-                )
-                self._m_think(f"[Proposal] saved draft for: {job.get('title','')[:50]}")
+                # v2.0.23d: the job queue re-discovers the same Fiverr/Upwork
+                # gigs every heartbeat, so skip re-saving a draft we already have.
+                # Without this, every cycle inserts 19 duplicate rows and DB
+                # Stats "proposals" grows without bound. We still log the draft
+                # was prepared (the proposal TEXT itself is regenerated fresh).
+                if _gig_title and self.db.proposal_exists(_gig_title, _platform):
+                    self._m_think(
+                        f"[Proposal] draft already saved for: {job.get('title','')[:50]} (skip dup)"
+                    )
+                else:
+                    self.db.add_proposal(
+                        gig_title=_gig_title,
+                        platform=_platform,
+                        budget_usd=float(job.get("budget", 0) or 0),
+                        draft=str(proposal_text or ""),
+                        status="drafted",
+                    )
+                    self._m_think(
+                        f"[Proposal] saved draft for: {job.get('title','')[:50]}"
+                    )
             except Exception as _prop_err:
                 self._m_think(f"[Proposal] save skipped: {_prop_err}")
 

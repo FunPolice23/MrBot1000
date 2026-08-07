@@ -266,6 +266,31 @@ class AgentDB:
         row = self._execute("SELECT COUNT(*) AS n FROM proposals").fetchone()
         return int(row["n"]) if row else 0
 
+    def proposal_exists(self, gig_title: str, platform: str = None) -> bool:
+        """True if a proposal draft already exists for this gig title+platform.
+
+        Used to avoid re-saving duplicate drafts every heartbeat (the job queue
+        re-discovers the same Fiverr/Upwork gigs each cycle, and the old save
+        path blindly inserted a new row each time). Cheap indexed lookup — we
+        match on title + platform where possible, falling back to title alone.
+        """
+        try:
+            if platform:
+                row = self._execute(
+                    "SELECT 1 FROM proposals WHERE gig_title=? AND platform=? LIMIT 1",
+                    (gig_title, platform),
+                ).fetchone()
+            else:
+                row = self._execute(
+                    "SELECT 1 FROM proposals WHERE gig_title=? LIMIT 1",
+                    (gig_title,),
+                ).fetchone()
+            return row is not None
+        except Exception:
+            # On any DB hiccup, treat as "not present" so we don't silently drop
+            # a draft — better to save a possible duplicate than lose one.
+            return False
+
     # ------------------------------------------------------------------
     # Instruction provenance gate (v2.0.22 S1): untrusted external playbooks
     # discovered on platforms (e.g. remote SKILL.md). Never executed until a

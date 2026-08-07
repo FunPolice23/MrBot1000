@@ -111,13 +111,7 @@ human_queue ──► send_human_message() ──► _handle_chat()
   - Conversation memory (last 30 exchanges)
   - Speech pattern adaptation
 
-#### CoordinatorWorker (`coordinator.py`)
-- **Purpose**: Cross-model communication
-- **Mechanism**: SharedContext JSON file (`~/.local/share/mrbot1000/shared_context.json`)
-- **Functions**:
-  - Routes chat vs main model tasks
-  - Maintains shared state pool
-  - Mediates model interactions
+> **`CoordinatorWorker` removed (v2.0.23):** The cross-model hub in `coordinator.py` was never instantiated by `main.py` (chat routing is handled by `SummarizerThread` + `chat_router` + `manager.send_human_message`). It was deleted as redundant ghost code and is recoverable from git history if ever needed.
 
 #### WorkerAgent (`base_worker.py`)
 - **Purpose**: Base class for all workers
@@ -205,7 +199,7 @@ agents_tab.append_reply(label, text)
 Tab switches to Agents, shows response
 ```
 
-Note: As of v2.0.23, the **Summarizer thread is the default direct ingress** for Agents-tab human chat. It answers conversation/analysis on its own independent QThread (chat model) so replies are never blocked by the Manager main-model heartbeat; task/command intents are classified by agents/chat_router.py and forwarded to the Manager.
+Note: As of v2.0.23d, the **Summarizer thread is the default direct ingress** for Agents-tab human chat. It answers conversation/analysis on its own independent QThread (chat model) so replies are never blocked by the Manager main-model heartbeat; task/command intents are classified by agents/chat_router.py and forwarded to the Manager.
 
 ### Task Flow (Coder Example)
 ```

@@ -1,4 +1,4 @@
-# MrBot1000 v2.0.23c — AI-Powered Earning Agent - W.I.P not a final product
+# MrBot1000 v2.0.23d — AI-Powered Earning Agent - W.I.P not a final product
 
 A real-time AI agent system for automated earning opportunity discovery, execution, and lifecycle tracking. Runs entirely locally — no cloud dependencies, no data sharing.
 
@@ -75,7 +75,7 @@ python -m tests --category import
 |----------|-------|---------|
 | `syntax` | `check_syntax` | Validate Python syntax across all files |
 | `import` | `test_imports`, `test_analyst_worker`, `test_job_search`, `test_main` | Verify module imports work |
-| `health` | `test_analyst_metrics`, `test_job_evaluation`, `test_coordinator` | Check agent functionality |
+| `health` | `test_analyst_metrics`, `test_job_evaluation` | Check agent functionality |
 | `integration` | `run_full_suite`, `run_quick_check` | Run comprehensive test bundles |
 
 Test results are saved to `tests/test_results/test_run_YYYYMMDD_HHMMSS.json`.
@@ -84,7 +84,7 @@ Test results are saved to `tests/test_results/test_run_YYYYMMDD_HHMMSS.json`.
 
 - **Main model** (any model Ollama serves — e.g. gemma-4-E2B, ornith, llama3, or any size): GPU/CPU - Heavy analysis, code work, decisions
 - **Chat model** (any model Ollama serves — e.g. gemma-3-1b, gemma-4-E2B, or any size): Fast conversation
-- **Multi-agent system**: Manager, Coordinator, Coder, Summarizer, JobSearch, Analyst
+- **Multi-agent system**: Manager, Coder, Summarizer, JobSearch, Analyst
 - **Message routing**: Agents-tab chat is answered by the **Summarizer thread** (independent QThread, chat model) so replies are never blocked by the Manager's main-model work; task/command intents are forwarded to the Manager.
 - **Cross-model communication**: SharedContext JSON file
 - **Opportunity lifecycle tracking**: Explicit, auditable stage transitions for discovered, researched, applied, in progress, submitted, paid, and failed opportunities
@@ -116,14 +116,14 @@ The Agents tab contains:
 | `agents/fiverr_client.py` | Fiverr gig discovery (RSS) |
 | `agents/upwork_client.py` | Upwork gig discovery (API) |
 | `agents/opportunity_lifecycle.py` | Opportunity lifecycle state machine |
-| `agents/coordinator.py` | Cross-model SharedContext bridge |
+| `agents/web_provider.py` | v2.0.23d configurable web search provider (ddgs/tavily/brave) |
 | `agents/analyst_worker.py` | Proposal metrics, job evaluation |
 | `agents/instruction_gate.py` | v2.0.22 provenance gate (untrusted SKILL.md) |
 | `agents/trust_boundary.py` | v2.0.22 high-trust action boundary |
 | `agents/platforms/` | v2.0.22 platform adapter skeleton (Fiverr/Reddit) |
 | `Agent.md` | Agent runtime contract & rules |
 | `ARCHITECTURE.md` | Full system architecture documentation |
-| `CHANGELOG.md` | Change history (currently v2.0.23) |
+| `CHANGELOG.md` | Change history (currently v2.0.23d) |
 | `tests/__main__.py` | Test suite runner |
 
 ## Configuration
@@ -156,7 +156,6 @@ Key settings:
 | Agent | Role | Model | Purpose |
 |-------|------|-------|---------|
 | Manager | Coordinator | Main | Primary chat/task ingress, orchestrates tasks, routes to workers |
-| Coordinator | Cross-model | Main | Bridges chat and main models via SharedContext |
 | Coder | Coding | Main | Code refactoring, bug fixes, implementation |
 | Summarizer | Chat | Chat | Summarizes thought streams, maintains chat memory, and provides contextual reply support |
 | JobSearch | Job Discovery | Main | Finds gigs on Reddit, Fiverr, Upwork |

@@ -996,7 +996,7 @@ class UnifiedChatWidget(QDialog):
         safe = text.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
         # Route notifications to sidebar, chat to main display
         # Check both label and text (text contains [Heartbeat] for Manager messages)
-        is_notification = any(x in label or f"[{x}]" in text for x in ["Heartbeat", "Worker", "Coordinator",
+        is_notification = any(x in label or f"[{x}]" in text for x in ["Heartbeat", "Worker",
                           "Result", "JobSearch", "Analyst", "Coder", "Action", "Evaluator"])
         if "lifecycle" in text.lower() or ("opportunity" in text.lower() and "status" in text.lower()):
             self._display.appendHtml(
@@ -1424,7 +1424,7 @@ class SummarizerChatWindow(QDialog):
         safe = text.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
         # Route notifications to sidebar, chat to main display
         # Check both label and text (text contains [Heartbeat] for Manager messages)
-        is_notification = any(x in label or f"[{x}]" in text for x in ["Heartbeat", "Worker", "Coordinator",
+        is_notification = any(x in label or f"[{x}]" in text for x in ["Heartbeat", "Worker",
                           "Result", "JobSearch", "Analyst", "Coder", "Action", "Evaluator"])
         if "lifecycle" in text.lower() or ("opportunity" in text.lower() and "status" in text.lower()):
             self._display.appendHtml(
@@ -1626,7 +1626,7 @@ class AgentsTab(QWidget):
         roster_grp.setMaximumWidth(280)
         roster_inner = QVBoxLayout(roster_grp)
         roster_inner.setSpacing(4)
-        for role in ("Manager", "Coordinator", "JobSearch", "Analyst", "Coder", "Summarizer"):
+        for role in ("Manager", "JobSearch", "Analyst", "Coder", "Summarizer"):
             row = QHBoxLayout()
             dot = QLabel("●")
             dot.setFixedWidth(14)
@@ -1802,7 +1802,7 @@ class AgentsTab(QWidget):
         safe = text.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
         # Route notifications to sidebar, chat to main display
         # Check both label and text (text contains [Heartbeat] for Manager messages)
-        is_notification = any(x in label or f"[{x}]" in text for x in ["Heartbeat", "Worker", "Coordinator",
+        is_notification = any(x in label or f"[{x}]" in text for x in ["Heartbeat", "Worker",
                           "Result", "JobSearch", "Analyst", "Coder", "Action", "Evaluator"])
         if "lifecycle" in text.lower() or ("opportunity" in text.lower() and "status" in text.lower()):
             self._display.appendHtml(
