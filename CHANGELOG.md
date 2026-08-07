@@ -1,5 +1,94 @@
 # MrBot1000 v2.0 - CHANGELOG
 
+## [2.0.20f] - 2026-08-07 - Fix Chat Model Routing + Backup Safety + Intent Misclassification
+
+### Bug fixed (chat model never used; Coder edits had no backup; pause mis-trigger)
+Three regressions found via live logs / user report:
+
+1. **Chat answers used the MAIN model, not the chat model.** `ManagerThread._handle_chat`
+   called `_llm_call(...)` which invoked `worker.llm()` **without `chat=True`**, so the
+   CEO's chat replies always ran on the main model. Added a `chat` param to `_llm_call`
+   and pass `chat=True` for the human-answer path so replies go to the configured chat
+   model. (Note: chat quality also depends on which model is set as the chat model in
+   Settings — with main=e2b and chat=1b the chat model is the weak 1b; set chat to a
+   capable model for good replies. See notes below.)
+
+2. **Coder edits had NO backup (safety broken).** `safe_write_file` referenced
+   `BACKUP_DIRNAME` and `datetime` — **both were undefined** at module level → every
+   backup raised `NameError` and was silently skipped ("Backup skipped: name 'X' is not
+   defined"), so edits were written with zero recoverability. Added `BACKUP_DIRNAME =
+   ".mrbot_backups"` and `import datetime`. Verified: overwrite now creates a `.bak` of
+   the original and `restore_last_backup` recovers it.
+
+3. **A question containing "pause" paused the heartbeat.** `_classify_intent` scored
+   keyword hits; "…pause of job searching? is that correct?" contains `pause` →
+   classified as `command` → hit the pause branch → heartbeat paused unexpectedly.
+   Rewrote the classifier: a message ending in `?` is a question unless its *first word*
+   is a standalone command verb (pause/resume/stop/start/reset/clear); standalone command
+   verbs are commands even without keywords. So "should we pause?" → question, "pause" →
+   command.
+
+Also rewrote `CHAT_SYSTEM` to answer the operator's actual question from history instead
+of emitting a scripted "Good morning team" CEO monologue (the cause of the repetitive,
+non-responsive answers).
+
+### Verification
+Live: `safe_write_file` creates `.bak` of original + `restore_last_backup` works (no
+"Backup skipped"); intent classifier passes 8/8 cases incl. the pause-in-question case;
+`_llm_call` now routes chat via `chat=True`. Full test suite 9/9 pass.
+
+## [2.0.20e] - 2026-08-07 - DB Stats Tab: Wire LLM Calls + Actions Logging (regression fix)
+
+### Bug fixed (DB Stats showed no Recent LLM Calls / Recent Actions / overview)
+The DB Stats tab queries `llm_calls` and `actions` tables, but those tables were
+**never being populated**:
+- `AgentDB.log_llm_call()` existed but was **never called** from `WorkerAgent.llm()`
+  — every Ollama/OpenAI/Anthropic call was invisible to the stats tab.
+- `AgentDB.log_action()` was only called from `action_pipeline.py`, not by the
+  manager when it executed actions.
+
+**Worse:** a 2.0.20a patch to `_fulfill_job` accidentally moved the
+`_execute_with_worker` finalize block (status/result_text/communicate/return)
+*inside* `_fulfill_job` (after its `return`), leaving `_execute_with_worker`
+with **no finalize and no return** — it fell through returning `None`. So actions
+were never finalized/logged at all.
+
+**Fix:**
+- `WorkerAgent.llm()` now logs every call via `self.db.log_llm_call(...)` (model,
+  provider, trigger, prompt/response chars, latency, error) for both successes and
+  failures — guarded so logging never breaks the LLM result.
+- Restored the finalize block to `_execute_with_worker` and added
+  `self.db.log_action(trigger, result_text)` so each executed action lands in the
+  `actions` table. Removed the orphaned (dead) finalize from `_fulfill_job`.
+- `refresh_db_stats` (unchanged) now has real data to display.
+
+### Verification
+Live: `llm()` produced 3 `llm_calls` rows (provider=ollama); `log_action` +
+`_execute_with_worker` produced 2 `actions` rows; manager now returns a proper
+`[STATUS] …` string (was `None`). Full test suite 9/9 pass.
+
+## [2.0.20d] - 2026-08-07 - P1: earning_pipeline Uses Canonical Model Var + Safe keep_alive
+
+### Bug fixed (earnings scoring ignored model settings / could 400)
+`EarningPipeline._evaluate_opportunity` POSTed directly to the Ollama API using
+`os.getenv("OLLAMA_MODEL", "llama3.2")` and no `keep_alive`. Two problems:
+1. It read the **legacy** `OLLAMA_MODEL` var, ignoring the canonical
+   `OLLAMA_MAIN_MODEL` established in 2.0.20a — so a main-model switch in
+   Settings would not affect earnings scoring.
+2. With no `keep_alive` it relied on the client default; combined with the
+   2.0.20c finding, a bare/empty duration could 400.
+
+**Fix:** model now resolves via the same precedence as `WorkerAgent.llm()` —
+`OLLAMA_MAIN_MODEL` → `OLLAMA_MODEL` fallback — and the request body includes a
+`_normalize_keep_alive(...)` value (reusing the 2.0.20c helper). The pipeline
+has no worker reference, so the live instance override is not visible here, but
+`OLLAMA_MAIN_MODEL` is the source of truth for the main model.
+
+### Verification
+Live call to `_evaluate_opportunity` returned a real score (risk_level=low,
+skill_match≈0.31) against the resolved main model with a unit-suffixed
+keep_alive — no 400. Full test suite 9/9 pass.
+
 ## [2.0.20c] - 2026-08-07 - Fix Ollama keep_alive Duration Rejection (400)
 
 ### Bug fixed (LLM failed to load / "LLM unavailable")

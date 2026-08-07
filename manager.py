@@ -93,9 +93,20 @@ _WORKER_ROUTING = {
 
 
 def _classify_intent(text: str) -> str:
-    lower = text.lower()
+    lower = text.lower().strip()
+    has_question = "?" in text
     scores = {intent: sum(1 for kw in kws if kw in lower)
               for intent, kws in _INTENT_KEYWORDS.items()}
+    # A standalone command verb ("pause", "resume", "stop", "start", "reset",
+    # "clear") is a command even without other keywords — but only when it is
+    # the first word. A question that merely *mentions* a command word
+    # (e.g. "should we pause?") must stay a question, so gate on first_word.
+    _CMD_VERBS = ("pause", "resume", "stop", "start", "reset", "clear")
+    first_word = lower.split()[0] if lower.split() else ""
+    if first_word in _CMD_VERBS:
+        return "command"
+    if has_question:
+        return "question"
     best = max(scores, key=scores.get)
     return best if scores[best] > 0 else "question"
 
@@ -167,11 +178,16 @@ class ManagerThread(QThread):
     )
 
     CHAT_SYSTEM = (
-        "You are the CEO of MrBot1000, an autonomous AI freelance agency. "
-        "The human operator is asking you a question or issuing a command. "
-        "Respond as an executive: direct, specific, action-oriented. "
-        "Reference actual files and workers when relevant. "
-        "Max 150 words. Be concise."
+        "You are the CEO of MrBot1000, an autonomous AI freelance agency, "
+        "speaking directly to the human operator who is running this software.\n"
+        "Answer the operator's MOST RECENT message using the conversation history. "
+        "Address exactly what they asked. Be direct and honest. "
+        "If you do not know something, say so plainly — do NOT invent status, "
+        "files, workers, or plans. Do not greet them or give a generic status "
+        "update unless they explicitly asked for one. Never repeat a prior answer "
+        "unchanged. Keep it under 120 words and concis.\n"
+        "The conversation history is provided so you can follow what they are "
+        "referring to; use it to stay on topic."
     )
 
     INDEX_PROMPT = (
@@ -325,9 +341,9 @@ class ManagerThread(QThread):
 
     # ── LLM helpers ───────────────────────────────────────────────────────────
 
-    def _llm_call(self, system: str, user: str, trigger: str) -> str:
+    def _llm_call(self, system: str, user: str, trigger: str, chat: bool = False) -> str:
         t0 = time.time()
-        result = self.worker.llm(system=system, user=user)
+        result = self.worker.llm(system=system, user=user, chat=chat)
         self._last_llm_time = time.time()
         return result
 
@@ -553,6 +569,21 @@ class ManagerThread(QThread):
             evidence = f"EXECUTION ERROR ({type(e).__name__}): {e}"
             ok = False
 
+        # ── Emit the REAL result (verified evidence), not LLM self-narrative ──
+        status = "DONE" if ok else "NO-OP/FAILED"
+        result_text = f"[{status}] {worker_name}: {evidence}"
+        self._a_think(f"[{worker_name}] RESULT: {evidence}")
+        self._communicate("A→M", f"[{worker_name}] {evidence}")
+        self._set_worker_free(worker_name)
+        # Persist the action so the DB Stats "Recent Actions" tab can show it
+        # (2.0.20e). Guarded: logging must never break the result emission.
+        try:
+            if self.db is not None:
+                self.db.log_action(trigger=action, action_text=result_text)
+        except Exception as _log_err:
+            self.log.emit(f"Action stats log skipped: {_log_err}")
+        return result_text
+
     def _fulfill_job(self, plan: dict, action: str, worker_name: str) -> str:
         """Create work/<platform>/<job_id>/ and complete the gig's deliverable.
 
@@ -586,14 +617,6 @@ class ManagerThread(QThread):
                     f"Deliverable saved; retry with better content.")
         except Exception as e:
             return f"FULFILL FAILED: {type(e).__name__}: {e}"
-
-        # ── Emit the REAL result (verified evidence), not LLM self-narrative ──
-        status = "DONE" if ok else "NO-OP/FAILED"
-        result_text = f"[{status}] {worker_name}: {evidence}"
-        self._a_think(f"[{worker_name}] RESULT: {evidence}")
-        self._communicate("A→M", f"[{worker_name}] {evidence}")
-        self._set_worker_free(worker_name)
-        return result_text
 
     def _proofread_change(self, file_path: str, diff) -> str:
         """PROOFREAD: ask the chat model to sanity-check the applied diff."""
@@ -685,7 +708,7 @@ class ManagerThread(QThread):
                 f"Context:\n{context[:3000]}"
             )
             self._m_think(f"CEO answering: {human_text[:80]}")
-            answer = self._llm_call(self.CHAT_SYSTEM, chat_prompt, "chat")
+            answer = self._llm_call(self.CHAT_SYSTEM, chat_prompt, "chat", chat=True)
             self._chat_history.append({"role": "assistant", "content": answer})
             self.chat_reply.emit("Answer", answer)
 

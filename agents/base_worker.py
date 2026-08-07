@@ -13,6 +13,7 @@ import time
 import json
 import sqlite3
 import mimetypes
+import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 import shutil
@@ -64,6 +65,11 @@ WRITE_EXCLUSION_DIRS = {
     # Deliverable workspaces are writable but excluded from the planner tree:
     "work",
 }
+
+# Backup directory name for safe_write_file() pre-edit copies (2.0.19 safety).
+# MUST be defined — safe_write_file/restore_last_backup reference it. Previously
+# missing → every backup raised NameError and was silently skipped (no safety).
+BACKUP_DIRNAME = ".mrbot_backups"
 
 # Directories excluded from project_file_tree() so the planner only sees real,
 # stable source files (2.0.19).
@@ -275,11 +281,35 @@ class WorkerAgent:
                     self.last_model = model
                     mode_label = "chat" if chat else "main"
                     self.log_signal.emit(f"[LLM] trying {name} mode={mode_label} model={model}")
+                    t0 = time.time()
                     resp = func(model, system, user, max_tokens, chat=chat)
+                    dt_ms = int((time.time() - t0) * 1000)
+                    # Persist the call so the DB Stats tab can show it (2.0.20e).
+                    # Guarded: logging must never break the LLM result.
+                    try:
+                        if self.db is not None:
+                            self.db.log_llm_call(
+                                model=model, provider=name,
+                                trigger=getattr(self, "last_trigger", "llm"),
+                                prompt_chars=len(system) + len(user),
+                                response_chars=len(resp or ""),
+                                latency_ms=dt_ms, error=None)
+                    except Exception as _log_err:
+                        self.log_signal.emit(f"[LLM] stats log skipped: {_log_err}")
                     self.last_provider = name
                     return resp
                 except Exception as e:
                     self.log_signal.emit(f"[LLM] {name} failed ({e}), trying next...")
+                    # Log the failed attempt too (error populated).
+                    try:
+                        if self.db is not None:
+                            self.db.log_llm_call(
+                                model=default_model, provider=name,
+                                trigger=getattr(self, "last_trigger", "llm"),
+                                prompt_chars=len(system) + len(user),
+                                response_chars=0, latency_ms=0, error=str(e)[:200])
+                    except Exception:
+                        pass
                     continue
 
             if attempt < 2:

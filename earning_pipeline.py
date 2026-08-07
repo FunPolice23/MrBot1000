@@ -28,6 +28,7 @@ from agents.fiverr_client import FiverrClient, FiverrGig
 from agents.earning_discoverer import EarningDiscoverer, EarningOpportunity
 from agents.opportunity_lifecycle import OpportunityLifecycleTracker
 from earning_memory import EarningMemory
+from agents.base_worker import _normalize_keep_alive
 
 ROOT_FOLDER = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(ROOT_FOLDER, "earning.db")
@@ -489,7 +490,12 @@ class EarningPipeline:
         )
 
         try:
-            model = os.getenv("OLLAMA_MODEL", "llama3.2")
+            # Model precedence matches WorkerAgent.llm() (2.0.20a): prefer the
+            # canonical OLLAMA_MAIN_MODEL, fall back to legacy OLLAMA_MODEL. The
+            # live instance override is not visible here (pipeline has no worker
+            # ref), but OLLAMA_MAIN_MODEL is the source of truth for the main model.
+            model = (os.getenv("OLLAMA_MAIN_MODEL", "").strip()
+                     or os.getenv("OLLAMA_MODEL", "llama3.2"))
             response = httpx.post(
                 "http://localhost:11434/api/chat",
                 json={
@@ -503,6 +509,9 @@ class EarningPipeline:
                         {"role": "user", "content": prompt},
                     ],
                     "options": {"num_predict": 300},
+                    # Unit-suffixed duration (2.0.20c): a bare number 400s.
+                    "keep_alive": _normalize_keep_alive(
+                        os.getenv("OLLAMA_KEEP_ALIVE", "300s")),
                 },
                 timeout=30.0,
             )
