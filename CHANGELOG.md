@@ -1,5 +1,50 @@
 # MrBot1000 v2.0 - CHANGELOG
 
+## [2.0.20g] - 2026-08-07 - Fix Coder Self-Destruction + Fiverr Search + Manager Adaptation
+
+### Critical: Coder agent was destroying its own source files (recurring ImportError)
+During autonomous runs the Coder's full-file-rewrite path (`analyze_and_fix` /
+`refactor`) sent only the first 3000 chars of a file to the LLM but asked for the
+"complete fixed file". On large files the model returned only what it saw and
+DROPPED the rest — overwriting a 677-line `action_pipeline.py` with ~94 lines, or
+`coder.py` with 0 bytes. Next launch then failed with
+`ImportError: cannot import name 'ActionPipeline'` / `coder.py` empty. Two guards:
+
+1. **Truncation guard (coder.py):** `analyze_and_fix`/`refactor` now refuse any
+   rewrite that would shrink a substantial file (>500 chars original) below 50%,
+   or return empty. The original is kept and the op is reported REFUSED. This
+   would have blocked every truncation observed in the logs.
+2. **Protected-source block (base_worker.py):** `safe_write_file` now refuses to
+   overwrite any of the app's import-critical modules (PROTECTED_SOURCE_FILES:
+   main/manager/coder/action_pipeline/base_worker/database/etc.) by basename,
+   so a bad LLM rewrite can never break the running app. Use an external editor
+   for intentional dev edits to those files.
+
+### Issue B.1: JobSearch returned 0 gigs every cycle (dead endpoint)
+The Fiverr client used RSS feeds (`/rss/gigs/<cat>`) that now return **404**.
+Rewrote `FiverrClient` to hit the working HTML search results page
+(`/search/gigs?query=<q>`) and parse gig cards for title + link. Live-verified:
+now returns real Python gigs (e.g. "Gui Python Java Cpp Sql Database Programming
+Assignment"). Parsing is tolerant — falls back to `[]` (honest "0 results") if the
+page structure changes. (Web-search fallback also remains unavailable in the
+standalone process, as before.)
+
+### Issue B.3: Manager never adapted to repeated failures
+`_full_cycle` blindly executed whatever the CEO decided and re-issued the identical
+task each heartbeat. Added per-focus consecutive-failure tracking
+(`_focus_failures`). When a focus area yields no usable result (0 gigs / 0
+proposals / refused / NO-OP) ≥2 times in a row, the CEO heartbeat prompt gets an
+**ADAPTION NOTICE** forcing it to PIVOT to a different action instead of repeating.
+Verified: 3 failed "job search" outcomes => counter=3 and an adapt signal; a
+successful outcome resets it to 0.
+
+### Note
+The Analyst's `generate_metrics_report` still reports `proposals=0` because nothing
+feeds it proposals (its store is only populated by `analyze_proposal`, never called
+by the Manager). That is a separate pipeline gap — the above fixes stop the bot
+from *crashing* and from *hiding* failures, and restore real job discovery; wiring
+Analyst to evaluate found gigs is the next step if you want it.
+
 ## [2.0.20f] - 2026-08-07 - Fix Chat Model Routing + Backup Safety + Intent Misclassification
 
 ### Bug fixed (chat model never used; Coder edits had no backup; pause mis-trigger)

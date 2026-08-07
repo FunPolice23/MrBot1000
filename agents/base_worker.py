@@ -71,6 +71,26 @@ WRITE_EXCLUSION_DIRS = {
 # missing → every backup raised NameError and was silently skipped (no safety).
 BACKUP_DIRNAME = ".mrbot_backups"
 
+# App source files that, if truncated/overwritten, prevent the app from launching
+# or break the autonomous loop. The Coder worker's full-file-rewrite path
+# (analyze_and_fix/refactor) has repeatedly DESTROYED these (e.g. truncated
+# action_pipeline.py to 94 lines, or coder.py to 0 bytes) because it shows the LLM
+# only the first 3000 chars but asks for the "complete file". safe_write_file
+# refuses to overwrite any of these basenames so a bad LLM rewrite can never
+# break the running app. For intentional dev edits, use an external editor.
+PROTECTED_SOURCE_FILES = {
+    "main.py", "manager.py", "ui.py", "theme_config.py", "library.py",
+    "database.py", "action_pipeline.py", "earning_pipeline.py",
+    "startup_validation.py", "test_earning_pipeline.py",
+    "__init__.py", "base_worker.py", "coder.py", "analyst_worker.py",
+    "job_search_worker.py", "fiverr_client.py", "upwork_client.py",
+    "chat_router.py", "summarizer.py", "coordinator.py", "shared_context.py",
+    "document_scanner.py", "task_workspace.py", "earning_discoverer.py",
+    "opportunity_lifecycle.py", "wallet_manager.py", "content_generator.py",
+    "workflow_planner.py", "social_earning_platform.py", "microtask_client.py",
+    "airdrop_scanner.py", "airdrop_claimer.py", "defi_scanner.py",
+}
+
 # Directories excluded from project_file_tree() so the planner only sees real,
 # stable source files (2.0.19).
 _CODEBASE_INDEX_SKIP_DIRS = WRITE_EXCLUSION_DIRS | {
@@ -112,6 +132,22 @@ FILENAME_BLOCKLIST = {
     "config.yaml", "config.yml", ".env", "credentials.json",
     "id_rsa", "id_dsa", ".gitconfig", ".bashrc", ".zshrc",
     "passwd", "shadow", "sudoers", "hosts", "secure",
+}
+
+# PROTECTED SOURCE MODULES — the app's own import-critical Python files.
+# The Coder agent MUST NEVER truncate/overwrite these. Writing a broken or
+# shortened version of any of these makes the application unlaunchable
+# (ImportError at startup) or destroys its own source (e.g. coder.py -> 0 bytes,
+# action_pipeline.py -> 94 lines). safe_write_file refuses such writes outright.
+# This is the hard backstop: even a pathological LLM output cannot break launch.
+# Stored as BASENAMES only — safe_write_file matches by Path(filename).name so
+# "./coder.py", "agents/coder.py", and absolute paths are all caught.
+PROTECTED_SOURCE_FILES = {
+    "main.py", "manager.py", "action_pipeline.py", "database.py", "library.py",
+    "ui.py", "theme_config.py", "startup_validation.py", "earning_pipeline.py",
+    "earning_memory.py", "test_earning_pipeline.py",
+    "coder.py", "base_worker.py", "job_search_worker.py", "analyst_worker.py",
+    "__init__.py",
 }
 
 # Configuration from environment (with defaults)
@@ -396,6 +432,18 @@ class WorkerAgent:
         """
         if not is_safe_filename(filename):
             self.log_signal.emit(f"BLOCKED: filename '{filename}' is on blocklist")
+            return False
+
+        # Refuse to overwrite the app's own import-critical source files. The
+        # Coder's full-file-rewrite path has repeatedly truncated these (e.g.
+        # coder.py -> 0 bytes, action_pipeline.py -> 94 lines) via a bad LLM
+        # rewrite; blocking here keeps the running app from being destroyed.
+        # Matched by basename so absolute paths and nested copies are also blocked.
+        _bn = Path(filename).name
+        if _bn in PROTECTED_SOURCE_FILES:
+            self.log_signal.emit(
+                f"BLOCKED: protected app source '{_bn}' — refusing overwrite "
+                f"(use an external editor for intentional dev changes)")
             return False
 
         root_resolved = Path(ROOT_FOLDER).resolve()

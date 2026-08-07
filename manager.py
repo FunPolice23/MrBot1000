@@ -217,6 +217,12 @@ class ManagerThread(QThread):
         self._last_llm_time  = 0.0
         self._min_llm_gap    = 2.0
 
+        # Per-focus consecutive-failure tracking (2.0.20g). When a heartbeat focus
+        # area repeatedly produces no usable result (e.g. JobSearch 0 gigs,
+        # Analyst 0 proposals), the CEO is told to PIVOT instead of re-issuing the
+        # identical task forever. Keyed by focus-area string.
+        self._focus_failures: Dict[str, int] = {}
+
         self._last_research      = None
         self._last_research_time = 0.0
 
@@ -634,6 +640,20 @@ class ManagerThread(QThread):
             return f"proofread error: {e}"
 
 
+    def _record_focus_outcome(self, focus: str, result_text: str):
+        """Track consecutive failures per focus area so the heartbeat can ADAPT
+        (skip a dead path) instead of re-issuing the same doomed task forever."""
+        if not focus:
+            return
+        _neg = ("[NO-OP/FAILED]", "no matches", "0 gigs", "returned 0",
+                "no real tool", "REFUSED", "Skipped", "FAILED", "no_metrics_available")
+        failed = any(sig in (result_text or "") for sig in _neg)
+        if failed:
+            self._focus_failures[focus] = self._focus_failures.get(focus, 0) + 1
+        else:
+            # Any non-failed outcome resets the streak for this focus.
+            self._focus_failures[focus] = 0
+
     def _full_cycle(self, trigger_label: str, manager_prompt: str, context: str, focus: str = ""):
         decision = self._ceo_decide(trigger_label, manager_prompt, focus)
         self.chat_reply.emit(trigger_label, decision)
@@ -660,7 +680,37 @@ class ManagerThread(QThread):
                 self._last_actions.pop(0)
 
             self._heartbeat_metrics["successful"] += 1
-            self._execute_with_worker(worker_name, action, context)
+            result_text = self._execute_with_worker(worker_name, action, context)
+            # Track per-focus consecutive failures so the CEO can pivot instead
+            # of re-issuing a task that yields nothing (2.0.20g).
+            self._record_focus_outcome(focus, result_text)
+            return result_text
+
+    def _record_focus_outcome(self, focus: str, result_text: str):
+        """Update consecutive-failure counter for a heartbeat focus area.
+
+        A 'failure' = the worker executed but produced no usable result
+        (0 gigs found, 0 proposals analyzed, a refused/NO-OP/FAILED op). This
+        is used by the heartbeat to tell the CEO to change strategy.
+        """
+        if not focus:
+            return
+        rt = (result_text or "").lower()
+        failed = (
+            "0 gigs" in rt or "no matches" in rt or "no_metrics" in rt
+            or "proposals=0" in rt or "no proposals" in rt
+            or "no-op/failed" in rt or "failed" in rt and "success" not in rt
+            or "refused" in rt or "skipped" in rt or "not found" in rt
+        )
+        if failed:
+            self._focus_failures[focus] = self._focus_failures.get(focus, 0) + 1
+            if self._focus_failures[focus] >= 2:
+                self._m_think(
+                    f"ADAPT: focus '{focus}' produced no results "
+                    f"{self._focus_failures[focus]}x — CEO should PIVOT to a "
+                    f"different action, not repeat the same task.")
+        else:
+            self._focus_failures[focus] = 0
 
     # ── Chat handler ──────────────────────────────────────────────────────────
 
@@ -904,7 +954,20 @@ class ManagerThread(QThread):
             # 4. Autonomous heartbeat
             if not self.paused and (now - last_heartbeat) >= self._heartbeat_interval:
                 self._heartbeat_count += 1
+                # ADAPT (2.0.20g): skip focus areas that have failed repeatedly so
+                # the CEO stops re-issuing a doomed task (e.g. job search -> 0 gigs
+                # forever). Advance past any focus with >=3 consecutive failures.
                 focus = _FOCUS_AREAS[self._focus_index % len(_FOCUS_AREAS)]
+                _skipped = 0
+                while (self._focus_failures.get(focus, 0) >= 3
+                       and _skipped < len(_FOCUS_AREAS)):
+                    self._m_think(
+                        f"ADAPT: focus '{focus[:40]}' failed "
+                        f"{self._focus_failures.get(focus,0)}x consecutively — "
+                        f"skipping to avoid looping on a dead path")
+                    self._focus_index += 1
+                    focus = _FOCUS_AREAS[self._focus_index % len(_FOCUS_AREAS)]
+                    _skipped += 1
                 self._focus_index += 1
 
                 self._m_think(f"Heartbeat #{self._heartbeat_count} — focus: {focus}")
@@ -916,8 +979,21 @@ class ManagerThread(QThread):
                     f"Review the team and research files. "
                     f"Identify the single most impactful action for THIS FOCUS AREA. "
                     f"Assign it to the right team member.\n\n"
-                    f"{context}"
                 )
+                # Adaptation signal (2.0.20g): if this focus has repeatedly
+                # produced no usable result, force the CEO to PIVOT rather than
+                # re-issue the identical task.
+                fails = self._focus_failures.get(focus, 0)
+                if fails >= 2:
+                    prompt += (
+                        f"ADAPTION NOTICE: This focus area has produced NO usable "
+                        f"result {fails} times in a row (e.g. 0 gigs found / 0 "
+                        f"proposals analyzed / operations refused). DO NOT repeat the "
+                        f"same action. Choose a DIFFERENT, concrete action this cycle "
+                        f"-- or, if the focus is genuinely unworkable in this "
+                        f"environment, pick a different focus area to make progress.\n\n"
+                    )
+                prompt += f"{context}"
                 self._full_cycle(f"Heartbeat: {focus[:30]}", prompt, context, focus)
                 self.agent_status.emit("Idle", "Ready")
                 last_heartbeat = now

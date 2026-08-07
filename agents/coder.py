@@ -97,6 +97,23 @@ class CoderWorker(WorkerAgent):
 
         fixed_content = re.sub(r"```[a-z]*\n?|```", "", raw).strip()
 
+        # ── TRUNCATION GUARD (2.0.20g) ──────────────────────────────────────
+        # analyze_and_fix sends only the first 3000 chars of the file to the LLM
+        # but asks for the "complete fixed file". On large files the model returns
+        # only what it saw and DROPS the rest, which would overwrite a 677-line
+        # file with a ~94-line fragment (or 0 bytes). Refuse any rewrite that
+        # shrinks a substantial file beyond a threshold so the original is kept.
+        if not fixed_content:
+            result["notes"] = "LLM returned empty content — refused (would erase file)"
+            return result
+        if len(original_content) > 500 and len(fixed_content) < 0.5 * len(original_content):
+            drop_pct = int(100 * (1 - len(fixed_content) / len(original_content)))
+            result["notes"] = (
+                f"REFUSED: rewrite would truncate file by {drop_pct}% "
+                f"({len(original_content)}→{len(fixed_content)} chars). "
+                f"LLM likely dropped content — keeping original.")
+            return result
+
         try:
             ast.parse(fixed_content)
         except SyntaxError as e:
@@ -165,6 +182,15 @@ class CoderWorker(WorkerAgent):
 
         raw = self.llm(user=prompt.build(), system=self.CODER_SYSTEM, max_tokens=4000)
         fixed = re.sub(r"```[a-z]*\n?|```", "", raw).strip()
+
+        # ── TRUNCATION GUARD (2.0.20g) ── refuse rewrites that would shrink a
+        # substantial file (LLM dropped content). Keeps the original intact.
+        if not fixed:
+            return {"success": False, "notes": "LLM returned empty content — refused"}
+        if len(original) > 500 and len(fixed) < 0.5 * len(original):
+            drop_pct = int(100 * (1 - len(fixed) / len(original)))
+            return {"success": False,
+                    "notes": f"REFUSED: rewrite would truncate by {drop_pct}% — keeping original"}
 
         if self.safe_write_file(file_path, fixed):
             return {"success": True, "notes": "Refactoring applied"}

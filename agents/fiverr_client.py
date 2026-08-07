@@ -55,94 +55,87 @@ class FiverrGig:
 
 
 class FiverrClient:
-    """Discover Fiverr gigs via RSS feeds and public pages."""
+    """Discover Fiverr gigs via the public search results page.
 
-    RSS_FEEDS = [
-        "https://www.fiverr.com/rss/gigs/python",
-        "https://www.fiverr.com/rss/gigs/web-development",
-        "https://www.fiverr.com/rss/gigs/data-entry",
-    ]
+    NOTE: Fiverr's RSS endpoints (…/rss/gigs/<cat>) return 404 as of 2026 and are
+    dead. The working source is the HTML search results page
+    (…/search/gigs?query=<q>), which returns gig cards we parse for title + link.
+    """
+
+    SEARCH_URL = "https://www.fiverr.com/search/gigs"
 
     def __init__(self):
         self.session = requests.Session()
         self.session.headers.update({
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36"
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0 Safari/537.36"
             ),
+            "Accept-Language": "en-US,en;q=0.9",
         })
 
-    def _parse_feed(self, feed_url: str):
-        """Parse an RSS/Atom feed, falling back to stdlib XML when feedparser is unavailable."""
-        if feedparser is not None:
-            return feedparser.parse(feed_url)
+    def _parse_search(self, query: str) -> List[dict]:
+        """Fetch the Fiverr search results page and extract gig cards.
 
+        Returns a list of {title, link} dicts. Tolerant: if the page structure
+        changes or parsing yields nothing, returns [] (honest 'no results').
+        """
         try:
-            response = self.session.get(feed_url, timeout=10)
-            response.raise_for_status()
-            root = ET.fromstring(response.text)
-        except Exception:
-            return SimpleNamespace(entries=[])
-
+            resp = self.session.get(
+                self.SEARCH_URL, params={"query": query}, timeout=15)
+            resp.raise_for_status()
+        except Exception as e:
+            self._last_error = str(e)
+            return []
+        html = resp.text
         entries = []
-        item_elements = []
-        if root.tag.endswith("rss"):
-            channel = root.find("channel")
-            if channel is not None:
-                item_elements = channel.findall("item")
-        elif root.tag.endswith("feed"):
-            item_elements = root.findall(".//entry")
-        else:
-            item_elements = root.findall(".//item")
-
-        for item in item_elements:
-            title_el = item.find("title")
-            summary_el = item.find("description") or item.find("summary")
-            link_el = item.find("link")
-            link = ""
-            if link_el is not None:
-                link = link_el.text or link_el.attrib.get("href", "")
-
-            entry = {
-                "title": title_el.text if title_el is not None and title_el.text else "",
-                "summary": summary_el.text if summary_el is not None and summary_el.text else "",
-                "description": summary_el.text if summary_el is not None and summary_el.text else "",
-                "link": link,
-            }
-            entries.append(entry)
-
-        return SimpleNamespace(entries=entries)
+        # Gig links on the search results page look like
+        #   /<username>/<gig-slug>?context_referrer=search_gigs...
+        # Capture those specifically (avoids seller-profile / category noise).
+        for m in re.finditer(
+                r'href="(/[^"?]+/[^"?]+)\?context_referrer=search_gigs', html):
+            path = m.group(1).lstrip("/")
+            parts = path.split("/")
+            slug = parts[1] if len(parts) > 1 else parts[0]
+            if not slug or len(slug) < 4:
+                continue
+            title = slug.replace("-", " ").strip().title()
+            link = "https://www.fiverr.com/" + path
+            entries.append({"title": title, "link": link})
+        # de-dup by link, keep order
+        seen, uniq = set(), []
+        for e in entries:
+            if e["link"] in seen:
+                continue
+            seen.add(e["link"])
+            uniq.append(e)
+        return uniq
 
     def find_gigs(self, query: str = "python",
-                      limit: int = 20) -> List[FiverrGig]:
-        """Find gigs via RSS feeds."""
+                  limit: int = 20) -> List[FiverrGig]:
+        """Find gigs via the Fiverr search results page (RSS is dead -> 404)."""
         gigs = []
-        for feed_url in self.RSS_FEEDS:
-            try:
-                feed = self._parse_feed(feed_url)
-                for entry in feed.entries[:limit]:
-                    title = entry.get("title", "")
-                    if query.lower() not in title.lower():
-                        continue
-
-                    link = entry.get("link", "")
-                    details = self._scrape_gig_page(link)
-
-                    gigs.append(FiverrGig(
-                        id=str(hash(link)),
-                        title=title[:200],
-                        description=details.get(
-                            "description",
-                            entry.get("summary", ""),
-                        )[:500],
-                        budget_usd=details.get("budget", 0.0),
-                        skills=details.get("skills", []),
-                        url=link,
-                        found_at=time.time(),
-                    ))
-            except Exception:
+        try:
+            entries = self._parse_search(query)
+        except Exception:
+            entries = []
+        for entry in entries[:limit]:
+            link = entry.get("link", "")
+            title = entry.get("title", "")
+            if query.lower() not in title.lower():
                 continue
-
+            gigs.append(FiverrGig(
+                id=str(hash(link)),
+                title=title[:200],
+                # description/budget/skills are not reliably scraped from the
+                # results page; left empty rather than fabricated.
+                description="",
+                budget_usd=0.0,
+                skills=[],
+                url=link,
+                found_at=time.time(),
+            ))
         return gigs[:limit]
 
     def _scrape_gig_page(self, url: str) -> dict:
