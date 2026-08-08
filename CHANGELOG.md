@@ -1,6 +1,70 @@
 # MrBot1000 v2.0 - CHANGELOG
 
-## [2.0.24a] - 2026-08-08 - Hotfix: startup crash (`SummarizerDB._execute` returned None)
+## [2.0.24c] - 2026-08-08 - UI send fix + prompt-injection hardening + pinned deps
+
+### Bug: Agents-tab chat "Send"/Enter did nothing (NameError)
+`ui.py` `append_you()` referenced `thinking` but had no `thinking` parameter
+(leftover from the v2.0.24 thinking-block injection, which only added the param
+to `append_reply`). `send()` calls `append_you(text)` *before* `_on_send`, so the
+`NameError` crashed every send — the message was never delivered. Fixed by giving
+`append_you` and `append_system` a `thinking: str = ""` default param (the
+collapsible block is simply empty for user/system messages). Verified the full
+chain: `Enter`/`Send` → `send()` → `append_you(text)` → `_on_send` =
+`main._human_send` → `summarizer.send_human_message(text)`.
+
+### Security: prompt-injection hardening for scraped/searched data
+External, attacker-influenced text (Fiverr/Upwork gig descriptions, web-search
+snippets, Reddit/airdrop/social scrapes) is fed to the LLM as context. A crafted
+post can embed directives ("ignore previous instructions", `<system>` blocks,
+`[INST]`/`<|im_start|>`, DAN, "exfiltrate the wallet"). Added defense-in-depth:
+- New `agents/prompt_sanitize.py`: `neutralize_instructions()` strips common
+  injection patterns; `sanitize_external_text()` wraps untrusted content in an
+  explicit `BEGIN/END UNTRUSTED <source> DATA` envelope telling the model to
+  treat it as data, not commands.
+- `manager.py` gig-proposal `task` now sanitizes title/description/skills.
+- `web_provider.py` neutralizes injection patterns in every search snippet
+  (ddgs/tavily/brave) before it is stored/summarized.
+- NOTE: this is defense-in-depth and does NOT replace the v2.0.22 provenance
+  gate (`instruction_gate.py`), which remains the hard boundary for SKILL.md
+  directives (quarantined until human-approved).
+
+### Supply chain: pinned dependencies
+`requirements.txt` now pins exact versions (was `>=`, which would auto-pull a
+malicious/faulty upstream release). Added `requirements.lock.txt` (full
+transitive lock via `pip freeze`) for reproducible installs. To upgrade, bump
+deliberately + re-freeze + re-test.
+
+Verified: canonical suite **10/10**; ad-hoc injection test (patterns neutralized,
+web snippets sanitized, all `if thinking:` guarded by a param); chat-send chain
+intact.
+
+
+
+### Bug/Vuln: `InstructionGate` could be tricked into fetching internal/metadata URLs
+A quarantined `SKILL.md` URL is attacker-influenced (it originates from a remote
+platform). `instruction_gate._default_fetch` performed a bare `requests.get(url)`
+with no destination validation, so a malicious URL like
+`http://169.254.169.254/latest/meta-data/...` (cloud credentials),
+`http://127.0.0.1:PORT` (local services), or `file://` could be fetched and its
+contents logged — an SSRF / credential-theft / internal-recon vector. The
+guard also did not block non-http(s) schemes.
+
+Fix (`agents/instruction_gate.py`):
+- New `_is_safe_fetch_url()`: rejects non-`http(s)` schemes, `localhost`,
+  `0.0.0.0`, `::1`, `169.254.169.254`, and any host that resolves (via
+  `socket.getaddrinfo`) to a private/loopback/link-local/reserved/multicast IP.
+- Guard applied at the **top of both `check()` and `fetch_instruction()`**,
+  BEFORE trust checks — so even an allowlisted-but-internal URL is refused
+  (SSRF protection beats the allowlist). On DNS resolution failure (offline/
+  no resolver) the URL is allowed through; the existing timeout/error handling
+  covers unreachable hosts and refusing would otherwise break offline use.
+- `_default_fetch()` retains a redundant in-fetch assertion as defense-in-depth.
+
+Verified: ad-hoc test **12/12** (blocks loopback/localhost/metadata/0.0.0.0/
+file:// /ftp / no-scheme; allowlisted-but-internal still refused; public URLs
+not blocked). Canonical suite **10/10** (updated gate tests use public hosts;
+the `example` TLD resolves and is treated as public).
+
 
 ### Bug: `AttributeError: 'NoneType' object has no attribute 'fetchone'`
 v2.0.24 added a `chat_history.thinking` migration inside `SummarizerDB._execute`.

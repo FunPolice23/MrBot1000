@@ -51,7 +51,7 @@ def _normalize_ddgs(raw: List[dict]) -> List[Dict[str, str]]:
             out.append({
                 "title": title[:120],
                 "url": url,
-                "snippet": (r.get("body") or r.get("snippet") or "")[:800],
+                "snippet": _sanitize_snippet(r.get("body") or r.get("snippet") or ""),
             })
     return out
 
@@ -65,7 +65,7 @@ def _normalize_tavily(raw: dict) -> List[Dict[str, str]]:
             out.append({
                 "title": title[:120],
                 "url": url,
-                "snippet": (r.get("content") or r.get("snippet") or "")[:800],
+                "snippet": _sanitize_snippet(r.get("content") or r.get("snippet") or ""),
             })
     return out
 
@@ -79,9 +79,27 @@ def _normalize_brave(raw: dict) -> List[Dict[str, str]]:
             out.append({
                 "title": title[:120],
                 "url": url,
-                "snippet": (r.get("description") or "")[:800],
+                "snippet": _sanitize_snippet(r.get("description") or ""),
             })
     return out
+
+
+def _sanitize_snippet(text: str) -> str:
+    """Neutralize prompt-injection patterns in untrusted web snippets (v2.0.24c).
+
+    Web-search result text is attacker-influenced; strip known injection
+    patterns before the snippet is stored/summarized by the LLM. Best-effort
+    speed bump — pairs with agents/prompt_sanitize at the prompt-assembly layer.
+    """
+    if not text:
+        return ""
+    try:
+        from agents.prompt_sanitize import neutralize_instructions
+        return neutralize_instructions(text)[:800]
+    except Exception:
+        # Module import failed (unexpected) — fall back to raw truncated text
+        # rather than crash the heartbeat. Sanitization is defense-in-depth.
+        return text[:800]
 
 
 def _search_ddgs(query: str, limit: int) -> List[Dict[str, str]]:

@@ -849,12 +849,19 @@ class ManagerThread(QThread):
         if not free_w:
             return
         self._m_think(f"Assigning gig to {free_w}: {job.get('title','')[:60]}")
+        # v2.0.24c: untrusted gig text (scraped title/description/skills) is
+        # external data — sanitize it before it enters the proposal prompt so a
+        # crafted gig description cannot inject instructions into the Coder.
+        from agents.prompt_sanitize import sanitize_external_text
+        _gig_title = job.get("title", "") or ""
+        _gig_desc = job.get("description", "") or ""
+        _gig_skills = ", ".join(job.get("skills", []) or [])
         task = (
             f"Prepare a proposal for this gig:\n"
-            f"Title: {job.get('title','')}\n"
-            f"Budget: ${job.get('budget',0):.0f}\n"
-            f"Description: {job.get('description','')}\n"
-            f"Skills: {', '.join(job.get('skills',[]))}"
+            f"Title: {sanitize_external_text(_gig_title, source='gig')}\n"
+            f"Budget: ${job.get('budget', 0):.0f}\n"
+            f"Description: {sanitize_external_text(_gig_desc, source='gig')}\n"
+            f"Skills: {sanitize_external_text(_gig_skills, source='gig')}"
         )
         self._job_queue.pop(0)
         _evidence, _ok, proposal_text = self._execute_with_worker(free_w, task, "")

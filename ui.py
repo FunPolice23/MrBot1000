@@ -1061,7 +1061,7 @@ class UnifiedChatWidget(QDialog):
             sb = self._notifications_list.verticalScrollBar()
             sb.setValue(sb.maximum())
 
-    def append_system(self, text: str):
+    def append_system(self, text: str, thinking: str = ""):
         ts = datetime.now().strftime("%H:%M:%S")
         safe = text.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
         # v2.0.24: render model reasoning as a collapsible <details> block
@@ -1089,7 +1089,7 @@ class UnifiedChatWidget(QDialog):
         label = f"[{trigger}] " if trigger else ""
         self.append_reply("Manager" + label, text)
 
-    def append_you(self, text: str):
+    def append_you(self, text: str, thinking: str = ""):
         ts = datetime.now().strftime("%H:%M:%S")
         safe = text.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
         # v2.0.24: render model reasoning as a collapsible <details> block
@@ -1451,7 +1451,7 @@ class SummarizerChatWindow(QDialog):
             self._on_send(text)
         self._input.clear()
 
-    def append_you(self, text: str):
+    def append_you(self, text: str, thinking: str = ""):
         ts = datetime.now().strftime("%H:%M:%S")
         safe = text.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
         # v2.0.24: render model reasoning as a collapsible <details> block
@@ -1859,7 +1859,7 @@ class AgentsTab(QWidget):
             self._on_send(text)
         self._input.clear()
 
-    def append_you(self, text: str):
+    def append_you(self, text: str, thinking: str = ""):
         ts = datetime.now().strftime("%H:%M:%S")
         safe = text.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
         # v2.0.24: render model reasoning as a collapsible <details> block

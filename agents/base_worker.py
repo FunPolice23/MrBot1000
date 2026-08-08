@@ -199,9 +199,11 @@ def read_think_level(chat: bool) -> str:
     return os.getenv(key, os.getenv("THINK_LEVEL", "med")).strip().lower() or "med"
 
 
-RESEARCH_MAX_CHARS = int(os.getenv("RESEARCH_MAX_CHARS", 5000))
 RESEARCH_MAX_CHARS = int(os.getenv("RESEARCH_MAX_CHARS", 15000))  # v2.0.24: x3 (was 5000) so research context is never cut off
 DEEP_READ_MAX_CHARS = int(os.getenv("DEEP_READ_MAX_CHARS", 24000))  # v2.0.24: x3 (was 8000)
+# Byte-size cap for a single research file: files larger than this are skipped
+# during folder scanning (display is still capped at RESEARCH_MAX_CHARS above).
+RESEARCH_MAX_BYTES = int(os.getenv("RESEARCH_MAX_BYTES", 2 * 1024 * 1024))  # v2.0.24: defined
 MAX_TOKENS = int(os.getenv("MAX_TOKENS", 2048))  # v2.0.24: x2 (was 1024); thinking budget overrides per-level anyway
 BLOCKED_MIME_TYPES = {"application/x-executable", "application/x-sharedlib",
                       "application/x-object", "application/x-dosexec"}
