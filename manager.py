@@ -366,12 +366,97 @@ class ManagerThread(QThread):
     # ── Decision + execution cycle ────────────────────────────────────────────
 
     def _ceo_decide(self, trigger_label: str, prompt: str, focus: str = "") -> str:
-        full = prompt + self._history_suffix()
         self._m_think(f"Forming decision for: {trigger_label}")
         self.agent_status.emit("Thinking", trigger_label)
-        decision = self._llm_call(self.CEO_SYSTEM, full, trigger_label)
-        self._m_think(f"Decision: {decision}")
+
+        # v2.0.24d: chunked CEO reasoning. Some models have a small context
+        # window (8k-128k tokens) and a giant research scan can overflow the
+        # input prompt (exceed_context_size_error). Instead of dropping data or
+        # shrinking thinking, we keep ALL research but feed it to the model in
+        # multiple gather passes, then synthesize a single decision from the
+        # accumulated findings. This is option A from the design: iterate over
+        # large data in layers rather than one oversized leap.
+        per_call_budget = self._ceo_prompt_budget_chars()
+        if len(prompt) + len(self._history_suffix()) <= per_call_budget:
+            full = prompt + self._history_suffix()
+            decision = self._llm_call(self.CEO_SYSTEM, full, trigger_label)
+            self._m_think(f"Decision: {decision}")
+            return decision
+
+        return self._ceo_decide_chunked(trigger_label, prompt, focus, per_call_budget)
+
+    def _ceo_prompt_budget_chars(self) -> int:
+        """Max chars for ONE CEO prompt, derived from the model's context window."""
+        ctx_tokens = int(os.getenv("MAIN_CONTEXT_TOKENS", 128000))
+        out_reserve = int(os.getenv("MAX_TOKENS", 2048)) + 1500
+        budget_tokens = max(2000, ctx_tokens - out_reserve)
+        return budget_tokens * 4
+
+    def _ceo_decide_chunked(self, trigger_label: str, prompt: str, focus: str,
+                           per_call_budget: int) -> str:
+        """Gather findings across research chunks, then decide once.
+
+        Splits the RESEARCH section of the prompt into <=budget pieces, asks the
+        model to extract only the ACTIONABLE signals from each (cheap, small
+        outputs), accumulates them, and runs a final CEO decision over the
+        compact accumulated findings + the non-research context. Works even on an
+        8k-context model because each pass stays within budget.
+        """
+        self._m_think("Context exceeds one prompt — using chunked gather passes")
+        marker = "=== RESEARCH FOLDER:"
+        if marker in prompt:
+            idx = prompt.index(marker)
+            head = prompt[:idx]
+            research = prompt[idx:]
+        else:
+            head = ""
+            research = prompt
+
+        chunks = self._chunk_text(research, per_call_budget - len(head) - 800)
+        findings = []
+        for i, chunk in enumerate(chunks):
+            self._m_think(f"Gather pass {i+1}/{len(chunks)} over research chunk")
+            gather_prompt = (
+                f"{head}\n{chunk}\n\n"
+                f"--- GATHER PASS {i+1}/{len(chunks)} ---\n"
+                f"From the research chunk above, extract ONLY concise, actionable "
+                f"signals relevant to: {trigger_label}. List bullet points; ignore "
+                f"boilerplate. If nothing relevant, reply 'NONE'."
+            )
+            out = self._llm_call(self.CEO_SYSTEM, gather_prompt + self._history_suffix(),
+                                 f"{trigger_label}[gather{i+1}]")
+            if out and out.strip().upper() != "NONE":
+                findings.append(out.strip())
+
+        gathered = "\n\n".join(f"-- from chunk {j+1} --\n{f}" for j, f in enumerate(findings)) \
+            if findings else "(no actionable signals found in research)"
+        final_prompt = (
+            f"{head}\n=== GATHERED RESEARCH FINDINGS (from {len(chunks)} chunk(s)) ===\n"
+            f"{gathered}\n\nNow decide the single best ACTION for: {trigger_label}"
+        )
+        decision = self._llm_call(self.CEO_SYSTEM, final_prompt + self._history_suffix(),
+                                  trigger_label)
+        self._m_think(f"Decision (chunked): {decision}")
         return decision
+
+    @staticmethod
+    def _chunk_text(text: str, max_chars: int) -> List[str]:
+        """Split text into pieces of at most max_chars, on line boundaries."""
+        if max_chars <= 0:
+            return [text]
+        if len(text) <= max_chars:
+            return [text]
+        chunks = []
+        cur = ""
+        for line in text.split("\n"):
+            if len(cur) + len(line) + 1 > max_chars and cur:
+                chunks.append(cur)
+                cur = line
+            else:
+                cur = (cur + "\n" + line) if cur else line
+        if cur:
+            chunks.append(cur)
+        return chunks
 
     def _parse_decision(self, decision: str, focus: str = ""):
         lower = decision.lower()

@@ -1,6 +1,87 @@
 # MrBot1000 v2.0 - CHANGELOG
 
-## [2.0.24c] - 2026-08-08 - UI send fix + prompt-injection hardening + pinned deps
+## [2.0.24e] - 2026-08-08 - Fix: research scan cap was too low, defeating chunking
+
+### Bug (found via live log): only 28 of 767 files ingested
+v2.0.24d added `RESEARCH_MAX_TOTAL_CHARS=200000` (≈50k tokens) as a hard cap
+*inside the scan* (`research_all`). The log showed
+`dropped 739 file(s) over RESEARCH_MAX_TOTAL_CHARS=200000` — so 739/767 files
+were discarded **before** the text ever reached the chunker. The chunker then
+only saw 28 files and never had to split. Result: the model saw a tiny slice,
+not the full scope. The cap defeated the whole point of option A.
+
+### Fix
+`RESEARCH_MAX_TOTAL_CHARS` is now a *safety ceiling only* (default 4,000,000
+chars ≈ 1M tokens), explicitly documented as "do NOT set low — a low value
+pre-truncates the scan and defeats chunking." The REAL ingestion mechanism is
+the chunked CEO reasoning (`_ceo_decide_chunked`): research is split into
+per-call-sized chunks and fed across multiple gather passes, so **all 767 files
+are ingested over time**, bounded only by the model's per-call context window
+(`MAIN_CONTEXT_TOKENS`). For a 128k model the 767 files (≈11.5M chars) become
+~23 gather passes; for an 8k model, more, but still complete coverage.
+
+`.env.example` default updated to 4000000 with guidance.
+
+Verified: canonical suite **10/10**; ad-hoc (cap default 4,000,000; chunker
+splits large text on line boundaries preserving content; `_ceo_decide_chunked`
+present).
+
+
+
+### Bug: `exceed_context_size_error` — research scan overflowed the model input
+Live log showed `n_prompt_tokens: 1617678` against a 128k window (some models
+cap even lower, down to 8k). Root cause: a large research folder (767 files ×
+up to 15,000 chars each ≈ 1.6M tokens) was assembled into ONE prompt; the LLM
+call failed and the CEO reported "LLM unavailable". Note: `num_predict` only
+caps the *output*, so lowering thinking (option B) would NOT have fixed an
+overflowing *input* — chunking (option A) is the correct fix.
+
+### Fix (option A — iterate over large data in layers)
+- `agents/base_worker.py`: new `RESEARCH_MAX_TOTAL_CHARS` (default 200,000 chars
+  ≈ 50k tokens, env-overridable) caps the total research text per scan. Files
+  beyond the budget are dropped oldest-first and logged ("dropped N file(s) over
+  RESEARCH_MAX_TOTAL_CHARS"). This alone prevents the 1.6M-token crash.
+- `manager.py` `_ceo_decide`: when the prompt exceeds a per-call budget derived
+  from `MAIN_CONTEXT_TOKENS` (env, default 128000) minus output reserve, it now
+  routes to `_ceo_decide_chunked()`:
+  1. Splits the RESEARCH section into ≤budget chunks (new `_chunk_text`).
+  2. Runs a cheap GATHER pass per chunk asking the model to extract only
+     actionable signals (ignores boilerplate; "NONE" if irrelevant).
+  3. Accumulates findings and runs ONE final CEO decision over the compact
+     gathered findings + non-research context.
+  Result: the model sees ALL research across several prompts but no single call
+  exceeds the model's (possibly 8k) context window. Thinking level is preserved
+  — output budget is unaffected.
+
+### Config
+`.env.example`: added `MAIN_CONTEXT_TOKENS=128000` and
+`RESEARCH_MAX_TOTAL_CHARS=200000` (both env-overridable; set
+`MAIN_CONTEXT_TOKENS` to your model's real cap, e.g. 8000 for small models).
+
+Verified: canonical suite **10/10**; ad-hoc (total cap enforced; `_chunk_text`
+splits on line boundaries; `_ceo_decide` single-call path used when under budget,
+chunked path when over; `_ceo_prompt_budget_chars` scales with
+`MAIN_CONTEXT_TOKENS`).
+
+
+
+### Bug: `RESEARCH_MAX_BYTES is not defined` (research-folder scan crashed every heartbeat)
+`base_worker.py` referenced `RESEARCH_MAX_BYTES` in the research-folder scanner
+but the constant was never defined (only `RESEARCH_MAX_CHARS`/`DEEP_READ_MAX_CHARS`
+were added in v2.0.24). Result: `NameError` on every heartbeat's "Scanning files
+for research context…" step (logged as `Error scanning research folder`). Fixed by
+defining `RESEARCH_MAX_BYTES` (default 2 MB file-size skip threshold, env-overridable).
+Also removed a duplicate stale `RESEARCH_MAX_CHARS=5000` line that had slipped in.
+
+### Bug: Reddit discovery crashed on bad/rate-limited responses
+`earning_discoverer._discover_reddit` called `resp.json()` directly on Reddit's
+`.json` endpoint. Reddit returns non-JSON (HTTP 429 HTML, empty body, blocked UA)
+to unauthenticated callers, which threw `Expecting value: line 1 column 1 (char 0)`
+and aborted the whole discovery pass. Added `_reddit_json()` which validates
+`status_code == 200` + non-empty body and degrades to `None` on any failure, so a
+bad subreddit fetch yields 0 Reddit opps instead of crashing. (Other discovery
+sources — Twitter/GitHub/etc. — were already wrapped in try/except.)
+
 
 ### Bug: Agents-tab chat "Send"/Enter did nothing (NameError)
 `ui.py` `append_you()` referenced `thinking` but had no `thinking` parameter
@@ -64,6 +145,23 @@ Verified: ad-hoc test **12/12** (blocks loopback/localhost/metadata/0.0.0.0/
 file:// /ftp / no-scheme; allowlisted-but-internal still refused; public URLs
 not blocked). Canonical suite **10/10** (updated gate tests use public hosts;
 the `example` TLD resolves and is treated as public).
+
+### Audit notes (no code change this pass)
+- **Supply chain**: `requirements.txt` uses `>=` (unpinned) and `ddgs` has no
+  version cap. A malicious future release of any dep would be auto-pulled.
+  Recommend pinning exact versions in a lockfile before any "production" use.
+  (Not changed — `>=` is a deliberate flexibility choice; flag for user.)
+- **Prompt-injection surface**: Reddit/airdrop/social text is untrusted and
+  flows into the LLM as data. Design already treats external text as data-not-
+  directive; no live `SKILL.md` content is injected into prompts pre-review.
+- **Action pipeline** (`action_pipeline.py`): correctly forbids `subprocess`,
+  `os.system`, `os.popen`, `__import__`, `shutil.rmtree`, `socket`,
+  `http.server`; `run_code` actions are never executed (fall through to
+  "Unknown action type"); path-escapes blocked; `safe_mode` skips all writes.
+- **Worker auto-import** (`library.py`): `exec_module`s every `*.py` in
+  `agents/` at startup (local-code supply-chain trust — acceptable for a local
+  app the operator controls; skip-list is minimal).
+
 
 
 ### Bug: `AttributeError: 'NoneType' object has no attribute 'fetchone'`

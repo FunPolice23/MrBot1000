@@ -108,53 +108,69 @@ class EarningDiscoverer:
         try:
             # Check r/WorkOnline subreddit
             url = "https://www.reddit.com/r/WorkOnline/new/.json?limit=50"
-            resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"})
-            data = resp.json()
+            data = self._reddit_json(url)
+            if data is not None:
+                for post in data.get("data", {}).get("children", []):
+                    post_data = post.get("data", {})
+                    title = post_data.get("title", "").lower()
 
-            for post in data.get("data", {}).get("children", []):
-                post_data = post.get("data", {})
-                title = post_data.get("title", "").lower()
-
-                if any(kw in title for kw in ["earn", "make money", "gig", "freelance", "cash"]):
-                    opp = EarningOpportunity(
-                        id=f"reddit_{post_data.get('id')}",
-                        title=post_data.get("title", "Work Opportunity"),
-                        description=post_data.get("selftext", "")[:500],
-                        platform="Reddit r/WorkOnline",
-                        url=post_data.get("url", ""),
-                        payment_type="usd",
-                        min_amount=1.0,
-                        required_action="apply",
-                    )
-                    opps.append(opp)
+                    if any(kw in title for kw in ["earn", "make money", "gig", "freelance", "cash"]):
+                        opp = EarningOpportunity(
+                            id=f"reddit_{post_data.get('id')}",
+                            title=post_data.get("title", "Work Opportunity"),
+                            description=post_data.get("selftext", "")[:500],
+                            platform="Reddit r/WorkOnline",
+                            url=post_data.get("url", ""),
+                            payment_type="usd",
+                            min_amount=1.0,
+                            required_action="apply",
+                        )
+                        opps.append(opp)
 
             # Check r/CryptoCurrency for airdrops/rewards
             url = "https://www.reddit.com/r/CryptoCurrency/new/.json?limit=100"
-            resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"})
-            data = resp.json()
+            data = self._reddit_json(url)
+            if data is not None:
+                for post in data.get("data", {}).get("children", []):
+                    post_data = post.get("data", {})
+                    title = post_data.get("title", "").lower()
 
-            for post in data.get("data", {}).get("children", []):
-                post_data = post.get("data", {})
-                title = post_data.get("title", "").lower()
-
-                if any(kw in title for kw in ["airdrop", "faucet", "reward", "earn", "free"]):
-                    opp = EarningOpportunity(
-                        id=f"cryptoreddit_{post_data.get('id')}",
-                        title=post_data.get("title", "Crypto Reward"),
-                        description=post_data.get("selftext", "")[:500],
-                        platform="Reddit r/CryptoCurrency",
-                        url=post_data.get("url", ""),
-                        payment_type="crypto",
-                        min_amount=1.0,
-                        required_action="claim",
-                        risk_level="medium",
-                    )
-                    opps.append(opp)
+                    if any(kw in title for kw in ["airdrop", "faucet", "reward", "earn", "free"]):
+                        opp = EarningOpportunity(
+                            id=f"cryptoreddit_{post_data.get('id')}",
+                            title=post_data.get("title", "Crypto Reward"),
+                            description=post_data.get("selftext", "")[:500],
+                            platform="Reddit r/CryptoCurrency",
+                            url=post_data.get("url", ""),
+                            payment_type="crypto",
+                            min_amount=1.0,
+                            required_action="claim",
+                            risk_level="medium",
+                        )
+                        opps.append(opp)
 
         except Exception as e:
             print(f"  Reddit error: {e}")
 
         return opps
+
+    @staticmethod
+    def _reddit_json(url: str):
+        """Safe Reddit JSON fetch: returns parsed dict or None on any failure.
+
+        Reddit rate-limits unauthenticated .json (HTTP 429 -> HTML body), returns
+        empty bodies, or blocks the UA. A bare resp.json() on those throws
+        'Expecting value: line 1 column 1' and aborts the whole discovery. Here we
+        validate status + non-empty body before parsing and degrade to None so the
+        caller simply finds 0 Reddit opps for that subreddit instead of crashing.
+        """
+        try:
+            resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+            if resp.status_code != 200 or not resp.text.strip():
+                return None
+            return resp.json()
+        except Exception:
+            return None
 
     def _discover_twitter_crypto(self) -> List[EarningOpportunity]:
         """Discover crypto earning opportunities from Twitter."""

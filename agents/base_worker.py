@@ -204,6 +204,14 @@ DEEP_READ_MAX_CHARS = int(os.getenv("DEEP_READ_MAX_CHARS", 24000))  # v2.0.24: x
 # Byte-size cap for a single research file: files larger than this are skipped
 # during folder scanning (display is still capped at RESEARCH_MAX_CHARS above).
 RESEARCH_MAX_BYTES = int(os.getenv("RESEARCH_MAX_BYTES", 2 * 1024 * 1024))  # v2.0.24: defined
+# TOTAL research-text SAFETY ceiling (chars) for a single scan. This is ONLY a
+# guard against reading a pathological folder into memory (e.g. 50GB of logs);
+# it is deliberately large. The REAL mechanism that lets the model ingest ALL
+# research regardless of size is the chunked CEO reasoning in manager.py
+# (_ceo_decide_chunked): research is split into per-call-sized chunks and fed
+# across multiple gather passes. So do NOT set this low — a low value pre-truncates
+# the scan and defeats chunking. Default ~1M tokens; raise freely.
+RESEARCH_MAX_TOTAL_CHARS = int(os.getenv("RESEARCH_MAX_TOTAL_CHARS", 4000000))  # ~1M tokens safety ceiling
 MAX_TOKENS = int(os.getenv("MAX_TOKENS", 2048))  # v2.0.24: x2 (was 1024); thinking budget overrides per-level anyway
 BLOCKED_MIME_TYPES = {"application/x-executable", "application/x-sharedlib",
                       "application/x-object", "application/x-dosexec"}
@@ -661,6 +669,8 @@ class WorkerAgent:
 
             try:
                 all_files = sorted(Path(rf).rglob("*"))
+                total_chars = 0
+                dropped_overflow = 0
                 for p in all_files:
                     if not p.is_file():
                         continue
@@ -686,10 +696,24 @@ class WorkerAgent:
                     try:
                         content = p.read_text(encoding="utf-8", errors="ignore")
                         display_content = content[:RESEARCH_MAX_CHARS]
-                        research_parts.append(f"[{rel.as_posix()}] ({size} bytes)\n{display_content}\n---")
+                        piece = f"[{rel.as_posix()}] ({size} bytes)\n{display_content}\n---\n"
+                        # v2.0.24d: enforce a TOTAL budget so a huge folder can't
+                        # overflow the model context. Keep the first N files that
+                        # fit; drop the rest (logged).
+                        if RESEARCH_MAX_TOTAL_CHARS and total_chars + len(piece) > RESEARCH_MAX_TOTAL_CHARS:
+                            dropped_overflow += 1
+                            continue
+                        research_parts.append(piece)
+                        total_chars += len(piece)
                         research_file_count += 1
                     except Exception as fe:
                         self.log_signal.emit(f"Skipped {p.name}: {fe}")
+
+                if dropped_overflow:
+                    self.log_signal.emit(
+                        f"Research scan: dropped {dropped_overflow} file(s) over "
+                        f"RESEARCH_MAX_TOTAL_CHARS={RESEARCH_MAX_TOTAL_CHARS} budget "
+                        f"(increase it to include more)")
 
                 if research_parts:
                     research_text = "\n".join(research_parts)
