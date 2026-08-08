@@ -151,10 +151,58 @@ PROTECTED_SOURCE_FILES = {
 }
 
 # Configuration from environment (with defaults)
+
+
+# ── Thinking-mode support (v2.0.24) ───────────────────────────────────────────
+# Thinking models (e.g. LFM2.5-*Thinking) emit a <think>…</think> reasoning block
+# followed by the final answer. We split these apart so the answer is never
+# starved by the reasoning tokens and the reasoning can be surfaced separately.
+_THINK_OPEN = "<think>"
+_THINK_CLOSE = "</think>"
+
+
+def split_thinking(content: str):
+    """Return (thinking, answer) from a raw model response.
+
+    Handles the common single-<think>…</think> form. If no thinking block is
+    present (non-thinking models), returns ("", content). Robust to missing
+    close tags (treats the remainder as thinking).
+    """
+    if not content or _THINK_OPEN not in content:
+        return ("", content or "")
+    start = content.index(_THINK_OPEN) + len(_THINK_OPEN)
+    close_idx = content.find(_THINK_CLOSE, start)
+    if close_idx == -1:
+        return (content[start:], "")
+    thinking = content[start:close_idx].strip()
+    answer = content[close_idx + len(_THINK_CLOSE):].strip()
+    return (thinking, answer)
+
+
+def think_budget(level: str, chat: bool) -> int:
+    """num_predict headroom for the ANSWER given a thinking level.
+
+    Low  -> model thinks briefly; most of the budget is the answer.
+    Med  -> balanced.
+    High -> generous answer budget so deeper reasoning never starves the reply.
+    """
+    lvl = (level or "med").strip().lower()
+    if chat:
+        table = {"low": 500, "med": 900, "high": 1500}
+    else:
+        table = {"low": 1500, "med": 2500, "high": 4000}
+    return table.get(lvl, table["med"])
+
+
+def read_think_level(chat: bool) -> str:
+    key = "THINK_LEVEL" if chat else "MAIN_THINK_LEVEL"
+    return os.getenv(key, os.getenv("THINK_LEVEL", "med")).strip().lower() or "med"
+
+
 RESEARCH_MAX_CHARS = int(os.getenv("RESEARCH_MAX_CHARS", 5000))
-RESEARCH_MAX_BYTES = int(os.getenv("RESEARCH_MAX_BYTES", 200_000))
-DEEP_READ_MAX_CHARS = int(os.getenv("DEEP_READ_MAX_CHARS", 8000))
-MAX_TOKENS = int(os.getenv("MAX_TOKENS", 1024))
+RESEARCH_MAX_CHARS = int(os.getenv("RESEARCH_MAX_CHARS", 15000))  # v2.0.24: x3 (was 5000) so research context is never cut off
+DEEP_READ_MAX_CHARS = int(os.getenv("DEEP_READ_MAX_CHARS", 24000))  # v2.0.24: x3 (was 8000)
+MAX_TOKENS = int(os.getenv("MAX_TOKENS", 2048))  # v2.0.24: x2 (was 1024); thinking budget overrides per-level anyway
 BLOCKED_MIME_TYPES = {"application/x-executable", "application/x-sharedlib",
                       "application/x-object", "application/x-dosexec"}
 
@@ -243,6 +291,7 @@ class WorkerAgent:
         self._last_action = ""
         self._running = True
         # Model overrides: instance > env
+        self.last_response = {"thinking": "", "answer": "", "raw": "", "provider": None, "model": None, "mode": None}
         self._ollama_model_override = primary_ollama_model or ollama_model
         self._chat_ollama_model_override = chat_ollama_model
 
@@ -290,6 +339,18 @@ class WorkerAgent:
             max_tokens = self._max_tokens
         else:
             max_tokens = int(os.getenv("MAX_TOKENS", MAX_TOKENS))
+        # v2.0.24: thinking-mode budget. If thinking is enabled, size the
+        # visible-answer budget by the THINK_LEVEL / MAIN_THINK_LEVEL knob so
+        # reasoning tokens never starve the final answer. An explicit
+        # max_tokens kwarg (e.g. planner calls) still wins.
+        think_on = os.getenv("THINKING_ENABLED", "true").strip().lower()
+        think_on = think_on not in ("0", "false", "no", "off")
+        if think_on and "max_tokens" not in kwargs:
+            level = read_think_level(chat)
+            max_tokens = think_budget(level, chat)
+            self.log_signal.emit(
+                f"[Think] level={level} mode={'chat' if chat else 'main'} num_predict={max_tokens}"
+            )
         providers = []
 
         # OpenAI: use when available and not disabled
@@ -441,10 +502,24 @@ class WorkerAgent:
                 keep_alive=_normalize_keep_alive(os.getenv("OLLAMA_KEEP_ALIVE", "300s")),
             )['message']['content']
             dt = time.time() - t0
+            # v2.0.24: Thinking models emit <think>…</think> blocks. Split the
+            # reasoning from the final answer so the answer is never starved and
+            # the reasoning can be shown separately in the chat UI / logs.
+            thinking, answer = split_thinking(content)
             self.log_signal.emit(
                 f"[LLM] ollama response model={model} latency={dt:.2f}s "
-                f"chars={len(content)}"
+                f"chars={len(content)} think_chars={len(thinking)} answer_chars={len(answer)}"
             )
+            # Keep the structured parts so callers can access reasoning without
+            # re-parsing (e.g. summarizer stores thinking in its DB chat turn).
+            self.last_response = {
+                "thinking": thinking,
+                "answer": answer,
+                "raw": content,
+                "provider": "ollama",
+                "model": model,
+                "mode": "chat" if chat else "main",
+            }
             return content
         except Exception as e:
             raise RuntimeError(f"Ollama model '{model}' failed: {e}")

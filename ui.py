@@ -990,10 +990,24 @@ class UnifiedChatWidget(QDialog):
         }
         self._sprite.set_state(state_map.get(status, "idle"))
 
-    def append_reply(self, label: str, text: str):
+    def append_reply(self, label: str, text: str, thinking: str = ""):
         """Append a message - notifications go to sidebar, chat stays clean."""
         ts = datetime.now().strftime("%H:%M:%S")
         safe = text.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
+        # v2.0.24: render model reasoning as a collapsible <details> block
+        # (expandable/hideable) above the answer for Assistant/Answer replies.
+        think_html = ""
+        if thinking:
+            _t = thinking.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            think_html = (
+                f'<details style="margin:2px 0 4px 0;">'
+                f'<summary style="cursor:pointer;color:#7aa7ff;font-size:11px;">'
+                f'🧠 Thinking (click to expand)</summary>'
+                f'<div style="color:#8fa6c4;font-size:11px;white-space:pre-wrap;'
+                f'max-height:240px;overflow:auto;padding:4px 6px;'
+                f'background:#14141a;border-left:2px solid #3b82f6;">{_t}</div>'
+                f'</details>'
+            )
         # Route notifications to sidebar, chat to main display
         # Check both label and text (text contains [Heartbeat] for Manager messages)
         is_notification = any(x in label or f"[{x}]" in text for x in ["Heartbeat", "Worker",
@@ -1013,12 +1027,14 @@ class UnifiedChatWidget(QDialog):
             self._display.appendHtml(
                 f'<span style="color:#888;">[{ts}]</span> '
                 f'<span style="color:#bb86fc;font-weight:bold;">{label}:</span><br>'
+                f'{think_html}'
                 f'<span style="color:#d4aaff;">{safe}</span><br>'
             )
         elif "Summarizer" in label or "Answer" in label:
             self._display.appendHtml(
                 f'<span style="color:#888;">[{ts}]</span> '
                 f'<span style="color:#00b0ff;font-weight:bold;">🤖 Assistant:</span><br>'
+                f'{think_html}'
                 f'<span style="color:#b3e5fc;">{safe}</span><br>'
             )
         else:
@@ -1048,6 +1064,20 @@ class UnifiedChatWidget(QDialog):
     def append_system(self, text: str):
         ts = datetime.now().strftime("%H:%M:%S")
         safe = text.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
+        # v2.0.24: render model reasoning as a collapsible <details> block
+        # (expandable/hideable) above the answer for Assistant/Answer replies.
+        think_html = ""
+        if thinking:
+            _t = thinking.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            think_html = (
+                f'<details style="margin:2px 0 4px 0;">'
+                f'<summary style="cursor:pointer;color:#7aa7ff;font-size:11px;">'
+                f'🧠 Thinking (click to expand)</summary>'
+                f'<div style="color:#8fa6c4;font-size:11px;white-space:pre-wrap;'
+                f'max-height:240px;overflow:auto;padding:4px 6px;'
+                f'background:#14141a;border-left:2px solid #3b82f6;">{_t}</div>'
+                f'</details>'
+            )
         self._display.appendHtml(
             f'<span style="color:#444;">[{ts}] ⚙ System:</span> '
             f'<span style="color:#666;font-size:11px;">{safe}</span>'
@@ -1062,6 +1092,20 @@ class UnifiedChatWidget(QDialog):
     def append_you(self, text: str):
         ts = datetime.now().strftime("%H:%M:%S")
         safe = text.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
+        # v2.0.24: render model reasoning as a collapsible <details> block
+        # (expandable/hideable) above the answer for Assistant/Answer replies.
+        think_html = ""
+        if thinking:
+            _t = thinking.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            think_html = (
+                f'<details style="margin:2px 0 4px 0;">'
+                f'<summary style="cursor:pointer;color:#7aa7ff;font-size:11px;">'
+                f'🧠 Thinking (click to expand)</summary>'
+                f'<div style="color:#8fa6c4;font-size:11px;white-space:pre-wrap;'
+                f'max-height:240px;overflow:auto;padding:4px 6px;'
+                f'background:#14141a;border-left:2px solid #3b82f6;">{_t}</div>'
+                f'</details>'
+            )
         self._display.appendHtml(
             f'<span style="color:#888;">[{ts}]</span> '
             f'<span style="color:#03dac6;font-weight:bold;">You:</span> '
@@ -1410,6 +1454,20 @@ class SummarizerChatWindow(QDialog):
     def append_you(self, text: str):
         ts = datetime.now().strftime("%H:%M:%S")
         safe = text.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
+        # v2.0.24: render model reasoning as a collapsible <details> block
+        # (expandable/hideable) above the answer for Assistant/Answer replies.
+        think_html = ""
+        if thinking:
+            _t = thinking.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            think_html = (
+                f'<details style="margin:2px 0 4px 0;">'
+                f'<summary style="cursor:pointer;color:#7aa7ff;font-size:11px;">'
+                f'🧠 Thinking (click to expand)</summary>'
+                f'<div style="color:#8fa6c4;font-size:11px;white-space:pre-wrap;'
+                f'max-height:240px;overflow:auto;padding:4px 6px;'
+                f'background:#14141a;border-left:2px solid #3b82f6;">{_t}</div>'
+                f'</details>'
+            )
         self._display.appendHtml(
             f'<span style="color:#888;">[{ts}]</span> '
             f'<span style="color:#03dac6;font-weight:bold;">You:</span> '
@@ -1418,10 +1476,24 @@ class SummarizerChatWindow(QDialog):
         sb = self._display.verticalScrollBar()
         sb.setValue(sb.maximum())
 
-    def append_reply(self, label: str, text: str):
+    def append_reply(self, label: str, text: str, thinking: str = ""):
         """Append a message - notifications go to sidebar, chat stays clean."""
         ts = datetime.now().strftime("%H:%M:%S")
         safe = text.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
+        # v2.0.24: render model reasoning as a collapsible <details> block
+        # (expandable/hideable) above the answer for Assistant/Answer replies.
+        think_html = ""
+        if thinking:
+            _t = thinking.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            think_html = (
+                f'<details style="margin:2px 0 4px 0;">'
+                f'<summary style="cursor:pointer;color:#7aa7ff;font-size:11px;">'
+                f'🧠 Thinking (click to expand)</summary>'
+                f'<div style="color:#8fa6c4;font-size:11px;white-space:pre-wrap;'
+                f'max-height:240px;overflow:auto;padding:4px 6px;'
+                f'background:#14141a;border-left:2px solid #3b82f6;">{_t}</div>'
+                f'</details>'
+            )
         # Route notifications to sidebar, chat to main display
         # Check both label and text (text contains [Heartbeat] for Manager messages)
         is_notification = any(x in label or f"[{x}]" in text for x in ["Heartbeat", "Worker",
@@ -1441,12 +1513,14 @@ class SummarizerChatWindow(QDialog):
             self._display.appendHtml(
                 f'<span style="color:#888;">[{ts}]</span> '
                 f'<span style="color:#bb86fc;font-weight:bold;">{label}:</span><br>'
+                f'{think_html}'
                 f'<span style="color:#d4aaff;">{safe}</span><br>'
             )
         elif "Summarizer" in label or "Answer" in label:
             self._display.appendHtml(
                 f'<span style="color:#888;">[{ts}]</span> '
                 f'<span style="color:#00b0ff;font-weight:bold;">🤖 Assistant:</span><br>'
+                f'{think_html}'
                 f'<span style="color:#b3e5fc;">{safe}</span><br>'
             )
         else:
@@ -1788,6 +1862,20 @@ class AgentsTab(QWidget):
     def append_you(self, text: str):
         ts = datetime.now().strftime("%H:%M:%S")
         safe = text.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
+        # v2.0.24: render model reasoning as a collapsible <details> block
+        # (expandable/hideable) above the answer for Assistant/Answer replies.
+        think_html = ""
+        if thinking:
+            _t = thinking.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            think_html = (
+                f'<details style="margin:2px 0 4px 0;">'
+                f'<summary style="cursor:pointer;color:#7aa7ff;font-size:11px;">'
+                f'🧠 Thinking (click to expand)</summary>'
+                f'<div style="color:#8fa6c4;font-size:11px;white-space:pre-wrap;'
+                f'max-height:240px;overflow:auto;padding:4px 6px;'
+                f'background:#14141a;border-left:2px solid #3b82f6;">{_t}</div>'
+                f'</details>'
+            )
         self._display.appendHtml(
             f'<span style="color:#888;">[{ts}]</span> '
             f'<span style="color:#03dac6;font-weight:bold;">You:</span> '
@@ -1796,10 +1884,24 @@ class AgentsTab(QWidget):
         sb = self._display.verticalScrollBar()
         sb.setValue(sb.maximum())
 
-    def append_reply(self, label: str, text: str):
+    def append_reply(self, label: str, text: str, thinking: str = ""):
         """Append a message - notifications go to sidebar, chat stays clean."""
         ts = datetime.now().strftime("%H:%M:%S")
         safe = text.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
+        # v2.0.24: render model reasoning as a collapsible <details> block
+        # (expandable/hideable) above the answer for Assistant/Answer replies.
+        think_html = ""
+        if thinking:
+            _t = thinking.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            think_html = (
+                f'<details style="margin:2px 0 4px 0;">'
+                f'<summary style="cursor:pointer;color:#7aa7ff;font-size:11px;">'
+                f'🧠 Thinking (click to expand)</summary>'
+                f'<div style="color:#8fa6c4;font-size:11px;white-space:pre-wrap;'
+                f'max-height:240px;overflow:auto;padding:4px 6px;'
+                f'background:#14141a;border-left:2px solid #3b82f6;">{_t}</div>'
+                f'</details>'
+            )
         # Route notifications to sidebar, chat to main display
         # Check both label and text (text contains [Heartbeat] for Manager messages)
         is_notification = any(x in label or f"[{x}]" in text for x in ["Heartbeat", "Worker",
@@ -1819,12 +1921,14 @@ class AgentsTab(QWidget):
             self._display.appendHtml(
                 f'<span style="color:#888;">[{ts}]</span> '
                 f'<span style="color:#bb86fc;font-weight:bold;">{label}:</span><br>'
+                f'{think_html}'
                 f'<span style="color:#d4aaff;">{safe}</span><br>'
             )
         elif "Summarizer" in label or "Answer" in label:
             self._display.appendHtml(
                 f'<span style="color:#888;">[{ts}]</span> '
                 f'<span style="color:#00b0ff;font-weight:bold;">🤖 Assistant:</span><br>'
+                f'{think_html}'
                 f'<span style="color:#b3e5fc;">{safe}</span><br>'
             )
         else:

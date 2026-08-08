@@ -184,7 +184,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("MrBot1000 v2.0.23d")
+        self.setWindowTitle("MrBot1000 v2.0.24a")
         self.resize(1450, 950)
         self.root_folder  = ROOT_FOLDER
         self._http_workers = []
@@ -486,7 +486,7 @@ class MainWindow(QMainWindow):
     def _on_comms(self, direction: str, text: str):
         self.thought_panel.route("Comms", text, direction)
 
-    def _on_chat_reply(self, trigger: str, text: str):
+    def _on_chat_reply(self, trigger: str, text: str, thinking: str = ""):
             # Filter out heartbeat and task messages from chat window
             # These should go to notifications/subtle status, not chat
             if trigger.startswith("Heartbeat:") or trigger.startswith("Task:"):
@@ -496,7 +496,7 @@ class MainWindow(QMainWindow):
                 return
         
             if hasattr(self, "agents_tab") and hasattr(self.agents_tab, "append_reply"):
-                self.agents_tab.append_reply("Manager", f"[{trigger}] {text}")
+                self.agents_tab.append_reply("Manager", f"[{trigger}] {text}", thinking)
 
     def _on_manager_thought(self, text: str):
         self.thought_panel.route("Manager", text)
@@ -606,7 +606,7 @@ class MainWindow(QMainWindow):
         container_layout.setContentsMargins(0, 0, 0, 0)
         container_layout.setSpacing(0)
 
-        title_lbl = QLabel("MrBot1000 v2.0.23d")
+        title_lbl = QLabel("MrBot1000 v2.0.24a")
         title_lbl.setAlignment(Qt.AlignHCenter | Qt.AlignVCenter)
         title_lbl.setStyleSheet(
             "font-size:15px; font-weight:bold; padding:8px 0px; "
@@ -1927,12 +1927,12 @@ class MainWindow(QMainWindow):
     def _summarizer_human_send(self, text: str):
         self.summarizer.send_human_message(text)
 
-    def _on_summarizer_chat_reply(self, label: str, text: str):
+    def _on_summarizer_chat_reply(self, label: str, text: str, thinking: str = ""):
         """Handle chat reply from summarizer - update tab display."""
         try:
             # Use the agents tab's built-in chat display (same as Manager thoughts)
             if hasattr(self, 'agents_tab') and hasattr(self.agents_tab, 'append_reply'):
-                self.agents_tab.append_reply(label, text)
+                self.agents_tab.append_reply(label, text, thinking)
                 # Switch to the Agents tab (index 1) using the real QTabWidget.
                 if getattr(self, "tabs", None) is not None:
                     self.tabs.setCurrentIndex(1)

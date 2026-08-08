@@ -1,4 +1,4 @@
-# MrBot1000 v2.0.23d — AI-Powered Earning Agent - W.I.P not a final product
+# MrBot1000 v2.0.24 — AI-Powered Earning Agent - W.I.P not a final product
 
 A real-time AI agent system for automated earning opportunity discovery, execution, and lifecycle tracking. Runs entirely locally — no cloud dependencies, no data sharing.
 
@@ -123,7 +123,7 @@ The Agents tab contains:
 | `agents/platforms/` | v2.0.22 platform adapter skeleton (Fiverr/Reddit) |
 | `Agent.md` | Agent runtime contract & rules |
 | `ARCHITECTURE.md` | Full system architecture documentation |
-| `CHANGELOG.md` | Change history (currently v2.0.23d) |
+| `CHANGELOG.md` | Change history (currently v2.0.24) |
 | `tests/__main__.py` | Test suite runner |
 
 ## Configuration

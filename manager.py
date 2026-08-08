@@ -808,12 +808,12 @@ class ManagerThread(QThread):
             )
             chat_prompt = (
                 f"Conversation:\n{history_str}\n\n"
-                f"Context:\n{context[:3000]}"
+                f"Context:\n{context[:9000]}"
             )
             self._m_think(f"CEO answering: {human_text[:80]}")
             answer = self._llm_call(self.CHAT_SYSTEM, chat_prompt, "chat", chat=True)
             self._chat_history.append({"role": "assistant", "content": answer})
-            self.chat_reply.emit("Answer", answer)
+            self.chat_reply.emit("Answer", answer, getattr(self.worker, "last_response", {}).get("thinking", ""))
 
 
 

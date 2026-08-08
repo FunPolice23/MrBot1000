@@ -76,11 +76,25 @@ class SummarizerDB:
         self._create_tables()
 
     def _execute(self, sql, params=(), commit=False):
+        # v2.0.24: ensure chat_history.thinking exists on older DBs
+        try:
+            cols = [r[1] for r in self._conn.execute(
+                "PRAGMA table_info(chat_history)").fetchall()]
+            if "thinking" not in cols:
+                self._conn.execute(
+                    "ALTER TABLE chat_history ADD COLUMN thinking TEXT DEFAULT ''")
+                self._conn.commit()
+        except Exception:
+            pass
+        # Always return the cursor so queries can .fetchone()/.fetchall().
+        # (The v2.0.24 migration edit had accidentally placed `return cur`
+        # inside the except block, causing _execute() to return None on the
+        # normal path and crashing load_latest_speech_patterns().)
         with self._lock:
             cur = self._conn.execute(sql, params)
             if commit:
                 self._conn.commit()
-            return cur
+        return cur
 
     def _create_tables(self):
         self._conn.executescript("""
@@ -97,7 +111,8 @@ class SummarizerDB:
                 ts        REAL    NOT NULL,
                 role      TEXT    NOT NULL,
                 text      TEXT    NOT NULL,
-                session   TEXT    DEFAULT ''
+                session   TEXT    DEFAULT '',
+                thinking  TEXT    DEFAULT ''
             );
             CREATE TABLE IF NOT EXISTS speech_patterns (
                 id        INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -136,14 +151,24 @@ class SummarizerDB:
         return self._execute("SELECT COUNT(*) FROM summaries").fetchone()[0]
 
     # ── Chat history ──────────────────────────────────────────────────────────
-    def save_chat_turn(self, role: str, text: str, session: str = ""):
+    def save_chat_turn(self, role: str, text: str, session: str = "", thinking: str = ""):
         self._execute(
-            "INSERT INTO chat_history (ts, role, text, session) VALUES (?,?,?,?)",
-            (time.time(), role, text, session),
+            "INSERT INTO chat_history (ts, role, text, session, thinking) VALUES (?,?,?,?,?)",
+            (time.time(), role, text, session, thinking or ""),
             commit=True
         )
 
     def get_recent_chat(self, limit: int = 40, session: str = None) -> List[Dict]:
+        # ensure thinking column exists before SELECT
+        try:
+            cols = [r[1] for r in self._conn.execute(
+                "PRAGMA table_info(chat_history)").fetchall()]
+            if "thinking" not in cols:
+                self._conn.execute(
+                    "ALTER TABLE chat_history ADD COLUMN thinking TEXT DEFAULT ''")
+                self._conn.commit()
+        except Exception:
+            pass
         if session:
             rows = self._execute(
                 "SELECT ts, role, text FROM chat_history "
@@ -167,9 +192,10 @@ class SummarizerDB:
         )
 
     def load_latest_speech_patterns(self, session: str = "") -> Optional[Dict]:
-        row = self._execute(
+        cur = self._execute(
             "SELECT payload FROM speech_patterns ORDER BY ts DESC LIMIT 1"
-        ).fetchone()
+        )
+        row = cur.fetchone() if cur is not None else None
         if row:
             try:
                 return json.loads(row["payload"])
@@ -216,7 +242,7 @@ class SummarizerThread(QThread):
     """
 
     summary_ready   = Signal(str)          # new auto-summary text
-    chat_reply      = Signal(str, str)     # (label, text) — label = "Answer"|"System"
+    chat_reply      = Signal(str, str, str)  # (label, text, thinking) — thinking may be ""
     status_changed  = Signal(str, str)     # (status, task)
     paused_changed  = Signal(bool)
     style_updated   = Signal(str)          # human-readable style description
@@ -383,7 +409,7 @@ class SummarizerThread(QThread):
             ts = self._fmt_ts(item["ts"])
             source = item["source"]
             result = item["result"].replace("\n", " ").strip()
-            lines.append(f"[{ts}] ({source}) {result[:500]}")
+            lines.append(f"[{ts}] ({source}) {result[:1500]}")
         return "\n".join(lines)
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -574,7 +600,7 @@ class SummarizerThread(QThread):
             self.manager.send_human_message(human_text)
             self.chat_reply.emit(
                 "System",
-                "↪ Routed to Manager for task execution (independent of chat).")
+                "↪ Routed to Manager for task execution (independent of chat).", "")
             self.status_changed.emit("Idle", "Watching thoughts…")
             return
         runtime_context = self._chat_router.build_runtime_context(
@@ -646,11 +672,14 @@ class SummarizerThread(QThread):
             self.worker.log_signal.emit(f"[Summarizer] LLM exception: {e}")
             reply = f"Error generating reply: {e}"
 
-        # Persist reply
-        self.summ_db.save_chat_turn("assistant", reply, self._session)
+        # v2.0.24: capture model reasoning (thinking) separately so it can
+        # be shown as a collapsible block in the chat window.
+        _thinking = getattr(self.worker, "last_response", {}).get("thinking", "") or ""
+        # Persist reply (with thinking) and store in conversation memory
+        self.summ_db.save_chat_turn("assistant", reply, self._session, thinking=_thinking)
         self._conversation.add("assistant", reply)
 
-        self.chat_reply.emit("Summarizer", reply)
+        self.chat_reply.emit("Summarizer", reply, _thinking)
         self.status_changed.emit("Idle", "Watching thoughts…")
 
     @staticmethod

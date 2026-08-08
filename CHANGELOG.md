@@ -1,6 +1,56 @@
 # MrBot1000 v2.0 - CHANGELOG
 
-## [2.0.23d] - 2026-08-07 - Web Provider + Proposal Deduplication
+## [2.0.24a] - 2026-08-08 - Hotfix: startup crash (`SummarizerDB._execute` returned None)
+
+### Bug: `AttributeError: 'NoneType' object has no attribute 'fetchone'`
+v2.0.24 added a `chat_history.thinking` migration inside `SummarizerDB._execute`.
+The migration's `try/except` accidentally placed `return cur` **inside** the
+`except` block, so on the normal (non-exception) path `_execute()` fell through
+and returned `None`. Every `_execute(...).fetchone()` / `.fetchall()` call then
+crashed on startup — first hit at `load_latest_speech_patterns()`
+(`summarizer.py:193`), taking down the whole app before the window opened.
+
+Fix: moved `return cur` to function level (always return the cursor), and
+hardened `load_latest_speech_patterns()` to guard against a `None` cursor.
+Verified by instantiating `SummarizerDB` and exercising the exact crash path
+(empty-DB `load_latest_speech_patterns()` now returns `None` cleanly;
+speech-pattern round-trip and `chat_history.thinking` persistence confirmed).
+
+(Tests did not catch this — `test_main` only imports `MainWindow`, it does not
+instantiate `SummarizerThread`, so the DB path was never exercised. Note for
+later: add a startup-DB smoke test.)
+
+
+
+### Feature: Thinking-mode support for chat & main models
+Your Thinking models (e.g. `LFM2.5-*Thinking`) emit a `<think>…</think>` block
+that was previously concatenated with the answer and **starved** (the answer got
+cut off after `` because `num_predict` was shared). Now:
+
+- `base_worker.split_thinking()` separates reasoning from the answer (SDK-independent;
+  Ollama 0.32 server returns the block embedded in `content`). `worker.last_response`
+  keeps `{thinking, answer, raw, …}` so callers never re-parse.
+- `_call_ollama` logs `think_chars=` / `answer_chars=` so the live log shows the split.
+- **Thinking level knob** (`THINK_LEVEL` chat / `MAIN_THINK_LEVEL` main, default `med`,
+  `THINKING_ENABLED=true`): mapped to a per-level `num_predict` budget so deeper
+  reasoning never starves the visible answer. `low/med/high` → chat 500/900/1500,
+  main 1500/2500/4000 tokens of answer headroom.
+- **Chat UI**: assistant replies now render a collapsible `🧠 Thinking (click to expand)`
+  `<details>` block above the answer — you see both what was *thought* and the
+  *response*, and can hide the reasoning. Works for both the Summarizer and the
+  Manager "Answer" path.
+- Summarizer DB `chat_history` gained a `thinking` column (with a live migration for
+  existing DBs) so reasoning survives restarts.
+
+### User addendum: broad truncation increase (x2–x3)
+Data-bearing limits raised so nothing is silently dropped from display:
+- `RESEARCH_MAX_CHARS` 5000→15000, `DEEP_READ_MAX_CHARS` 8000→24000, `MAX_TOKENS` 1024→2048
+- chat context window `context[:3000]`→`[:9000]`; `chat_router` previews 3000/2500→6000/5000;
+  summarizer task-result preview `[:500]`→`[:1500]`.
+- Intentional cosmetic UI truncations preserved (badges `[:60]`, roster `[:30]`,
+  log `[:24]`, wallet `[:8]`, manager preview `[:80]`).
+
+
 
 ### Feature: configurable web search provider
 The JobSearch `search('web')` branch previously did `from library import web_search`,

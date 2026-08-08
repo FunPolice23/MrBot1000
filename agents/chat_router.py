@@ -164,11 +164,11 @@ class ChatRouter:
             if path.suffix.lower() == ".json":
                 try:
                     payload = json.loads(text)
-                    preview = json.dumps(payload, indent=2)[:3000]
+                    preview = json.dumps(payload, indent=2)[:6000]
                 except Exception:
-                    preview = text[:3000]
+                    preview = text[:6000]
             else:
-                preview = text[:2500]
+                preview = text[:5000]
 
             if not preview.strip():
                 continue
